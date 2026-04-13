@@ -432,7 +432,10 @@ class DeepXDEBasedFitness(CompoundOperator):
             fitness_value = err
             if np.sum(objective.weights_final) == 0:
                 fitness_value /= self.params['penalty_coeff']
+
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             fitness_value = 1e7
 
         if force_out_of_place:
@@ -440,8 +443,9 @@ class DeepXDEBasedFitness(CompoundOperator):
         else:
             objective.fitness_calculated = True
             objective.fitness_value = fitness_value
+            _, target, features = objective.evaluate(normalize=True, return_val=False)  # для stability
 
-            self.get_g_fun_vals()
+            self.get_g_fun_vals(target)
             data_shape = global_var.grid_cache.inner_shape
             weights = calculate_weights(features, target, self.g_fun_vals, data_shape)
             weights_arr = np.array(weights)
@@ -452,7 +456,7 @@ class DeepXDEBasedFitness(CompoundOperator):
             objective.coefficients_stability = total_lr
             objective.stability_calculated = True
 
-    def get_g_fun_vals(self):
+    def get_g_fun_vals(self, target):
         try:
             self.g_fun_vals = global_var.grid_cache.g_func[global_var.grid_cache.g_func_mask].reshape(-1)
         except:

@@ -8,29 +8,29 @@ from epde.structure.main_structures import Equation
 import epde.globals as global_var
 
 # debug log. Just for my PC
-# LOGPATH = "/tmp/deepxde_adapter_debug.txt"
-# 
-# try:
-#     with open(LOGPATH, "a", encoding="utf-8") as _f:
-#         _f.write(f"\n=== DeepXDEAdapter log started at PID {os.getpid()} ===\n")
-# except Exception:
-#     LOGPATH = None
-# 
-# 
-# def #_log(msg: Any) -> None:
-#     """
-#     Lightweight debug logger used in this module.
-# 
-#     NOT FOR PRODUCTION. JUST SIMPLE CASE FOR DEBUG ON MY PC
-#     """
-#     print(msg)
-#     sys.stdout.flush()
-#     if LOGPATH:
-#         try:
-#             with open(LOGPATH, "a", encoding="utf-8") as f:
-#                 f.write(str(msg) + "\n")
-#         except Exception:
-#             pass
+LOGPATH = "/tmp/deepxde_adapter_debug.txt"
+
+try:
+    with open(LOGPATH, "a", encoding="utf-8") as _f:
+        _f.write(f"\n=== DeepXDEAdapter log started at PID {os.getpid()} ===\n")
+except Exception:
+    LOGPATH = None
+
+
+def _log(msg: Any) -> None:
+    """
+    Lightweight debug logger used in this module.
+
+    NOT FOR PRODUCTION. JUST SIMPLE CASE FOR DEBUG ON MY PC
+    """
+    print(msg)
+    sys.stdout.flush()
+    if LOGPATH:
+        try:
+            with open(LOGPATH, "a", encoding="utf-8") as f:
+                f.write(str(msg) + "\n")
+        except Exception:
+            pass
 
 
 class DeepXDEAdapter:
@@ -86,7 +86,7 @@ class DeepXDEAdapter:
                     self.coord_map[name] = spatial_dim
                 else:  # spatial
                     self.coord_map[name] = i - 1
-        #_log(f"[DeepXDEAdapter] coord_map = {self.coord_map}")
+        _log(f"[DeepXDEAdapter] coord_map = {self.coord_map}")
 
     def _equation_to_pde_func(self, dde: Any, equation: Equation) -> Callable[[Any, Any], Any]:
         """
@@ -251,7 +251,7 @@ class DeepXDEAdapter:
         import deepxde as dde
         from scipy.spatial import cKDTree
 
-        #_log("[DeepXDEAdapter] Solving 2D problem (1 space + time)")
+        _log("[DeepXDEAdapter] Solving 2D problem (1 space + time)")
         t, x = grids[0], grids[1]
         geom = dde.geometry.Interval(x.min(), x.max())
         timedomain = dde.geometry.TimeDomain(t.min(), t.max())
@@ -319,12 +319,12 @@ class DeepXDEAdapter:
         net = dde.nn.FNN(layer_size, self.activation, self.kernel_initializer)
         model = dde.Model(data_obj, net)
         model.compile(self.optimizer, lr=self.lr)
-        #_log("[DeepXDEAdapter] Starting training (2D)")
+        _log("[DeepXDEAdapter] Starting training (2D)")
         try:
             losshistory, train_state = model.train(epochs=self.epochs)
             final_loss = float(losshistory.loss_train[-1][0]) if losshistory.loss_train else float("nan")
         except Exception as e:
-            #_log(f"[DeepXDEAdapter] Training failed: {e}")
+            _log(f"[DeepXDEAdapter] Training failed: {e}")
             y_pred = np.full(data.shape, np.nan)
             final_loss = float("nan")
             return y_pred, final_loss
@@ -332,7 +332,7 @@ class DeepXDEAdapter:
         coords_pred = np.stack([x.flatten(), t.flatten()], axis=1)
         y_pred = model.predict(coords_pred).reshape(-1)
 
-        #_log(f"[DeepXDEAdapter] Training complete, final_loss {final_loss}")
+        _log(f"[DeepXDEAdapter] Training complete, final_loss {final_loss}")
         return y_pred, final_loss
 
     def _solve_3d(self, equation: Equation, grids: Sequence[np.ndarray], data: np.ndarray) -> Tuple[np.ndarray, float]:
@@ -344,7 +344,7 @@ class DeepXDEAdapter:
         import deepxde as dde
         from scipy.spatial import cKDTree
 
-        #_log("[DeepXDEAdapter] Solving 3D problem (2 space + time)")
+        _log("[DeepXDEAdapter] Solving 3D problem (2 space + time)")
         t, x, y = grids[0], grids[1], grids[2]
         geom = dde.geometry.Rectangle([x.min(), y.min()], [x.max(), y.max()])
         timedomain = dde.geometry.TimeDomain(t.min(), t.max())
@@ -433,12 +433,12 @@ class DeepXDEAdapter:
         net = dde.nn.FNN(layer_size, self.activation, self.kernel_initializer)
         model = dde.Model(data_obj, net)
         model.compile(self.optimizer, lr=self.lr)
-        #_log("[DeepXDEAdapter] Starting training (3D)")
+        _log("[DeepXDEAdapter] Starting training (3D)")
         try:
             losshistory, train_state = model.train(epochs=self.epochs)
             final_loss = float(losshistory.loss_train[-1][0]) if losshistory.loss_train else float("nan")
         except Exception as e:
-            #_log(f"[DeepXDEAdapter] Training failed: {e}")
+            _log(f"[DeepXDEAdapter] Training failed: {e}")
             y_pred = np.full(data.shape, np.nan)
             final_loss = float("nan")
             return y_pred, final_loss
@@ -446,7 +446,7 @@ class DeepXDEAdapter:
         coords_pred = np.stack([x.flatten(), y.flatten(), t.flatten()], axis=1)
         y_pred = model.predict(coords_pred).reshape(-1)
 
-        #_log(f"[DeepXDEAdapter] Training complete, final_loss {final_loss}")
+        _log(f"[DeepXDEAdapter] Training complete, final_loss {final_loss}")
         return y_pred, final_loss
 
     def solve(self, equation: Equation, grids: Sequence[np.ndarray], data: np.ndarray) -> Tuple[np.ndarray, float]:
@@ -467,10 +467,10 @@ class DeepXDEAdapter:
         -------
         (y_pred, final_loss)
             y_pred is a flat numpy array of predictions (shape matches data.ravel()).
-            final_loss is the final training loss (float) or#_log NaN on failure.
+            final_loss is the final training loss (float) or_log NaN on failure.
         """
         dim = len(grids)
-        #_log(f"[DeepXDEAdapter] Detected dimension: {dim}")
+        _log(f"[DeepXDEAdapter] Detected dimension: {dim}")
 
         # Set coordinate info from grid_cache (keys order must match grids order)
         keys, _ = global_var.grid_cache.get_all(mode="numpy")

@@ -395,11 +395,12 @@ class DeepXDEBasedFitness(CompoundOperator):
             cfg = self.params.get('deepxde_config', {}) if config is None else config
             self.adapter = DeepXDEAdapter(pretrained_net=pretrained_net, **cfg)
 
-    def apply(self, objective: Equation, arguments: dict, force_out_of_place: bool = False):
+    def apply(self, objective, arguments: dict, force_out_of_place: bool = False):
         self_args, subop_args = self.parse_suboperator_args(arguments=arguments)
 
-        self.suboperators['sparsity'].apply(objective, subop_args['sparsity'])
-        self.suboperators['coeff_calc'].apply(objective, subop_args['coeff_calc'])
+        if force_out_of_place:
+            self.suboperators['sparsity'].apply(objective, subop_args.get('sparsity', {}))
+        self.suboperators['coeff_calc'].apply(objective, subop_args.get('coeff_calc', {}))
 
         try:
             pretrained_net = deepcopy(global_var.solution_guess_nn)
@@ -409,54 +410,89 @@ class DeepXDEBasedFitness(CompoundOperator):
 
         keys, grids = global_var.grid_cache.get_all(mode='numpy')
 
-        _, target, features = objective.evaluate(normalize=False, return_val=False)
-        data = target.reshape(-1)
+        if isinstance(objective, SoEq):
+            data_list = []
+            for var_name in objective.vars_to_describe:
+                eq = objective.vals[var_name]
+                _, target, _ = eq.evaluate(normalize=False, return_val=False)
+                data_list.append(target.reshape(-1))
+        else:
+            _, target, _ = objective.evaluate(normalize=False, return_val=False)
+            data_list = [target.reshape(-1)]
 
         try:
-            solution, loss = self.adapter.solve(equation=objective, grids=grids, data=data)
+            solution_list, loss = self.adapter.solve(equation_or_system=objective,
+                                                     grids=grids,
+                                                     data=data_list)
             if np.isnan(loss):
                 raise ValueError("NaN loss")
-            mask = global_var.grid_cache.g_func_mask
-            mask_flat = mask.flatten()
-            masked_solution = solution[mask_flat]
-            masked_data = data
-            metric = self.params.get('error_metric', 'rmse')
-            if metric == 'rmse':
-                err = np.sqrt(np.mean((masked_solution - masked_data) ** 2))
-            elif metric == 'l2':
-                err = np.linalg.norm(masked_solution - masked_data, ord=2)
-            elif metric == 'mae':
-                err = np.mean(np.abs(masked_solution - masked_data))
+
+            if isinstance(objective, SoEq):
+                for idx, (var_name, eq) in enumerate(objective.vals.items()):
+                    err = self._compute_error(solution_list[idx], data_list[idx], eq)
+                    if force_out_of_place:
+                        pass
+                    else:
+                        eq.fitness_value = err
+                        eq.fitness_calculated = True
+                        self._compute_stability_for_equation(eq)
             else:
-                err = np.sqrt(np.mean((masked_solution - masked_data) ** 2))
-            fitness_value = err
-            if np.sum(objective.weights_final) == 0:
-                fitness_value /= self.params['penalty_coeff']
-
+                solution = solution_list[0]
+                data = data_list[0]
+                err = self._compute_error(solution, data, objective)
+                if force_out_of_place:
+                    return err
+                else:
+                    objective.fitness_value = err
+                    objective.fitness_calculated = True
+                    self._compute_stability_for_equation(objective)
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            print(f'[DeepXDEBasedFitness] DeepXDE solve failed: {e}')
             fitness_value = 1e7
+            if force_out_of_place:
+                return fitness_value
+            else:
+                objective.fitness_value = fitness_value
+                objective.fitness_calculated = True
+                return
 
-        if force_out_of_place:
-            return fitness_value
+        if force_out_of_place and isinstance(objective, SoEq):
+            total_err = np.mean([eq.fitness_value for eq in objective.vals.values()])
+            return total_err
+
+    def _compute_error(self, solution, data, eq):
+        mask = global_var.grid_cache.g_func_mask
+        mask_flat = mask.flatten()
+        masked_solution = solution[mask_flat]
+        masked_data = data
+        metric = self.params.get('error_metric', 'rmse')
+        if metric == 'rmse':
+            err = np.sqrt(np.mean((masked_solution - masked_data) ** 2))
+        elif metric == 'l2':
+            err = np.linalg.norm(masked_solution - masked_data, ord=2)
+        elif metric == 'mae':
+            err = np.mean(np.abs(masked_solution - masked_data))
         else:
-            objective.fitness_calculated = True
-            objective.fitness_value = fitness_value
-            _, target, features = objective.evaluate(normalize=True, return_val=False)  # для stability
+            err = np.sqrt(np.mean((masked_solution - masked_data) ** 2))
+        if np.sum(eq.weights_final) == 0:
+            err /= self.params.get('penalty_coeff', 0.2)
+        return err
 
-            self.get_g_fun_vals(target)
-            data_shape = global_var.grid_cache.inner_shape
-            weights = calculate_weights(features, target, self.g_fun_vals, data_shape)
-            weights_arr = np.array(weights)
-            std = weights_arr.std(axis=0, ddof=1)
-            mu = weights_arr.mean(axis=0)
-            cv = np.where(mu != 0, (std / mu) ** 2, 0.0)
-            total_lr = np.sum(cv[:-1]) / len(data_shape)
-            objective.coefficients_stability = total_lr
-            objective.stability_calculated = True
+    def _compute_stability_for_equation(self, eq: Equation):
+        # Повторно вычисляется evaluate
+        _, target, features = eq.evaluate(normalize=False, return_val=False)
+        data_shape = global_var.grid_cache.inner_shape
+        self.get_g_fun_vals()
+        weights = calculate_weights(features, target, self.g_fun_vals, data_shape)
+        weights_arr = np.array(weights)
+        std = weights_arr.std(axis=0, ddof=1)
+        mu = weights_arr.mean(axis=0)
+        cv = np.where(mu != 0, (std / mu) ** 2, 0.0)
+        total_lr = np.sum(cv[:-1]) / len(data_shape) if len(cv) > 1 else 0.0
+        eq.coefficients_stability = total_lr
+        eq.stability_calculated = True
 
-    def get_g_fun_vals(self, target):
+    def get_g_fun_vals(self):
         try:
             self.g_fun_vals = global_var.grid_cache.g_func[global_var.grid_cache.g_func_mask].reshape(-1)
         except:

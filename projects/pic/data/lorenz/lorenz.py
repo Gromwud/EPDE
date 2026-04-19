@@ -70,20 +70,18 @@ def compare_equations(correct_symbolic: str, eq_incorrect_symbolic: str,
     return all([correct_eq.vals[var].coefficients_stability < incorrect_eq.vals[var].coefficients_stability for var in
                 all_vars])
 
-
 def prepare_suboperators(fitness_operator: CompoundOperator, operator_params: dict) -> CompoundOperator:
     sparsity = LASSOSparsity()
     coeff_calc = LinRegBasedCoeffsEquation()
 
-    # sparsity = map_operator_between_levels(sparsity, 'gene level', 'chromosome level')
-    # coeff_calc = map_operator_between_levels(coeff_calc, 'gene level', 'chromosome level')
-
-    fitness_operator.set_suboperators({'sparsity': sparsity,
-                                       'coeff_calc': coeff_calc})
-    fitness_cond = lambda x: not getattr(x, 'fitness_calculated')
+    fitness_operator.set_suboperators({'sparsity': sparsity, 'coeff_calc': coeff_calc})
     fitness_operator.params = operator_params
-    fitness_operator = map_operator_between_levels(fitness_operator, 'gene level', 'chromosome level',
-                                                   objective_condition=fitness_cond)
+
+    # Применяем маппинг только для операторов уровня 'gene level'
+    if 'chromosome level' not in fitness_operator._tags:
+        fitness_cond = lambda x: not getattr(x, 'fitness_calculated')
+        fitness_operator = map_operator_between_levels(fitness_operator, 'gene level', 'chromosome level',
+                                                       objective_condition=fitness_cond)
     return fitness_operator
 
 def create_equation_from_str(eq_str, target_var, base_pool, all_vars):
@@ -233,34 +231,34 @@ if __name__ == "__main__":
     from epde.operators.utils.default_parameter_loader import EvolutionaryParams
     print(torch.cuda.is_available())
     # Operator = fitness.SolverBasedFitness # Replace by the developed PIC-based operator.
-    # Operator = fitness.PIC
+    Operator = fitness.PIC
     #Operator = fitness.L2LRFitness
-    #params = EvolutionaryParams()
-    #operator_params = params.get_default_params_for_operator('DiscrepancyBasedFitnessWithCV') #{"penalty_coeff": 0.2, "pinn_loss_mult": 1e4}
-    Operator = fitness.DeepXDEBasedFitness
     params = EvolutionaryParams()
-
-    try:
-        operator_params = params.get_default_params_for_operator('DeepXDEBasedFitness')
-    except Exception as e:
-        print(f"Предупреждение: не удалось загрузить параметры для DeepXDEBasedFitness: {e}")
-        print("Использую ручную конфигурацию.")
-        operator_params = {
-            "deepxde_config": {
-                "net": [50, 50, 50],
-                "activation": "tanh",
-                "optimizer": "adam",
-                "lr": 1e-3,
-                "num_domain": 1000,
-                "num_boundary": 200,
-                "num_initial": 200,
-                "epochs": 2000
-            },
-            "penalty_coeff": 0.2,
-            "error_metric": "rmse"
-        }
-    print('operator_params ', operator_params)
+    operator_params = params.get_default_params_for_operator('PIC')#'DiscrepancyBasedFitnessWithCV') #{"penalty_coeff": 0.2, "pinn_loss_mult": 1e4}
+    # Operator = fitness.DeepXDEBasedFitness
+    # params = EvolutionaryParams()
+    #
+    # try:
+    #     operator_params = params.get_default_params_for_operator('DeepXDEBasedFitness')
+    # except Exception as e:
+    #     print(f"Предупреждение: не удалось загрузить параметры для DeepXDEBasedFitness: {e}")
+    #     print("Использую ручную конфигурацию.")
+    #     operator_params = {
+    #         "deepxde_config": {
+    #             "net": [50, 50, 50],
+    #             "activation": "tanh",
+    #             "optimizer": "adam",
+    #             "lr": 1e-3,
+    #             "num_domain": 1000,
+    #             "num_boundary": 200,
+    #             "num_initial": 200,
+    #             "epochs": 2000
+    #         },
+    #         "penalty_coeff": 0.2,
+    #         "error_metric": "rmse"
+    #     }
+    # print('operator_params ', operator_params)
     fit_operator = prepare_suboperators(Operator(list(operator_params.keys())), operator_params)
 
-    #lorenz_discovery(0)
-    lorenz_test(fit_operator, noise_level=0)
+    lorenz_discovery(0)
+    #lorenz_test(fit_operator, noise_level=0)

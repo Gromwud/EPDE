@@ -207,5 +207,5 @@ if __name__ == "__main__":
     directory = os.path.dirname(os.path.realpath(__file__))
     ac_folder_name = os.path.join(directory)
 
-    AC_test(fit_operator, ac_folder_name, 0)
-    # ac_discovery(ac_folder_name, 0)
+    #AC_test(fit_operator, ac_folder_name, 0)
+    ac_discovery(ac_folder_name, 0)

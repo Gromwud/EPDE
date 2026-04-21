@@ -20,6 +20,7 @@ from epde.operators.utils.template import CompoundOperator
 from scipy.io import loadmat
 
 from epde import TrigonometricTokens, GridTokens, CacheStoredTokens
+import pandas as pd
 import epde.globals as global_var
 
 import scipy.io as scio
@@ -84,7 +85,8 @@ def prepare_suboperators(fitness_operator: CompoundOperator, operator_params: di
                                                    objective_condition=fitness_cond)
     return fitness_operator
 
-def burgers_data(filename: str):
+
+def burgers_sindy_data(filename: str):
     burg = loadmat(filename)
     t = np.ravel(burg['t'])
     x = np.ravel(burg['x'])
@@ -94,12 +96,23 @@ def burgers_data(filename: str):
     return grids, data
 
 
-def burgers_test(operator: CompoundOperator, foldername: str, noise_level: int = 0):
+def burgers_data(filename: str):
+    df = pd.read_csv(filename, header=None)
+
+    u = df.values
+    data = np.transpose(u)
+    t = np.linspace(0, 1, 101)
+    x = np.linspace(-1000, 0, 101)
+    grids = np.meshgrid(t, x, indexing = 'ij')  # np.stack(, axis = 2) , axis = 2)
+    return grids, data
+
+
+def burgers_sindy_test(operator: CompoundOperator, foldername: str, noise_level: int = 0):
     # Test scenario to evaluate performance on Allen-Cahn equation
     eq_burgers_symbolic = '0.0001 * d^2u/dx1^2{power: 1.0} + -5.0 * u{power: 3.0} + 5.0 * u{power: 1.0} + 0.0 = du/dx0{power: 1.0}'
     eq_burgers_incorrect = '-1.0 * d^2u/dx0^2{power: 1.0} + 1.5 * u{power: 1.0} + -0.0 = du/dx0{power: 1.0}'
 
-    grid, data = burgers_data(os.path.join(foldername, 'burgers.mat'))
+    grid, data = burgers_sindy_data(os.path.join(foldername, 'burgers.mat'))
     noised_data = noise_data(data, noise_level)
     # data_nn = load_pretrained_PINN(os.path.join(foldername, 'ac_ann_pretrained.pickle'))
 
@@ -120,7 +133,53 @@ def burgers_test(operator: CompoundOperator, foldername: str, noise_level: int =
 
 
 def burgers_discovery(foldername, noise_level):
-    grid, data = burgers_data(os.path.join(foldername, 'burgers.mat'))
+    grid, data = burgers_data(os.path.join(foldername, 'burgers_sln_100.csv'))
+    noised_data = noise_data(data, noise_level)
+    data_nn = load_pretrained_PINN(os.path.join(foldername, f'kdv_{noise_level}_ann.pickle'))
+
+    dimensionality = data.ndim - 1
+
+    epde_search_obj = EpdeSearch(use_solver=False, multiobjective_mode=True,
+                                      use_pic=True, boundary=20,
+                                      coordinate_tensors=grid, device='cuda')
+
+    # epde_search_obj.set_preprocessor(default_preprocessor_type='ANN',
+    #                                     preprocessor_kwargs={'epochs_max' : 1e3})
+    epde_search_obj.set_preprocessor(default_preprocessor_type='FD',
+                                     preprocessor_kwargs={})
+    popsize = 16
+
+    epde_search_obj.set_moeadd_params(population_size=popsize,
+                                      training_epochs=2)
+
+    custom_grid_tokens = CacheStoredTokens(token_type='grid',
+                                                token_labels=['t', 'x'],
+                                                token_tensors={'t': grid[0], 'x': grid[1]},
+                                                params_ranges={'power': (1, 1)},
+                                                params_equality_ranges=None)
+
+    trig_params_ranges = {'power': (1, 1)}
+    trig_params_equal_ranges = {}
+
+    trig_tokens = TrigonometricTokens(dimensionality=dimensionality, freq = (0.999, 1.001))
+
+    factors_max_number = {'factors_num': [1, 2], 'probas': [0.65, 0.35]}
+
+    bounds = (1e-5, 1e2)
+    epde_search_obj.fit(data=noised_data, variable_names=['u', ], max_deriv_order=(2, 3), derivs=None,
+                        equation_terms_max_number=5, data_fun_pow=3,
+                        additional_tokens=[custom_grid_tokens],
+                        equation_factors_max_number=factors_max_number,
+                        eq_sparsity_interval=bounds, fourier_layers=False) #
+
+    epde_search_obj.equations(only_print=True, num=1)
+    epde_search_obj.visualize_solutions()
+
+    return epde_search_obj
+
+
+def burgers_sindy_discovery(foldername, noise_level):
+    grid, data = burgers_sindy_data(os.path.join(foldername, 'burgers.mat'))
     noised_data = noise_data(data, noise_level)
     data_nn = load_pretrained_PINN(os.path.join(foldername, f'kdv_{noise_level}_ann.pickle'))
 
@@ -181,5 +240,6 @@ if __name__ == "__main__":
     directory = os.path.dirname(os.path.realpath(__file__))
     burgers_folder_name = os.path.join(directory)
 
-    # burgers_test(fit_operator, burgers_folder_name, 0)
     burgers_discovery(burgers_folder_name, 0)
+    # burgers_sindy_test(fit_operator, burgers_folder_name, 0)
+    # burgers_sindy_discovery(burgers_folder_name, 0)

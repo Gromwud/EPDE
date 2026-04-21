@@ -67,7 +67,7 @@ class EqRightPartSelector(CompoundOperator):
                     min_fitness = fitness
                     min_idx = target_idx
                     weights_internal = objective.weights_internal
-                    weights_final = [weight for weight in objective.weights_final if weight != 0]
+                    weights_final = objective.weights_final
                     sw_weights = objective._cached_sw_weights
 
                 objective.weights_internal_evald = False

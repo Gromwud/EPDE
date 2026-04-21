@@ -14,7 +14,7 @@ from epde.operators.utils.template import add_base_param_to_operator
 
 from epde.operators.multiobjective.selections import MOEADDSelection
 from epde.operators.multiobjective.variation import get_basic_variation
-from epde.operators.common.fitness import L2Fitness, L2LRFitness, SolverBasedFitness, PIC
+from epde.operators.common.fitness import L2Fitness, L2LRFitness, SolverBasedFitness, PIC, DeepXDEBasedFitness
 from epde.operators.common.right_part_selection import RandomRHPSelector, EqRightPartSelector
 
 from epde.operators.multiobjective.moeadd_specific import get_pareto_levels_updater, SimpleNeighborSelector, get_initial_sorter
@@ -49,7 +49,8 @@ class MOEADDDirector(OptimizationPatternDirector):
         coeff_calc = LinRegBasedCoeffsEquation()
 
         if use_solver:
-            fitness = PIC(['penalty_coeff']) if use_pic else SolverBasedFitness(['penalty_coeff'])
+            # fitness = PIC(['penalty_coeff']) if use_pic else SolverBasedFitness(['penalty_coeff'])
+            fitness = DeepXDEBasedFitness(['penalty_coeff']) if use_pic else SolverBasedFitness(['penalty_coeff'])
             # self.best_objectives = [0., 1., 0.] if use_pic else [0., 1.]
 
             sparsity_c = map_operator_between_levels(sparsity, 'gene level', 'chromosome level')

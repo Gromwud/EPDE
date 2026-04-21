@@ -190,9 +190,11 @@ def train_ann(args: list, data: np.ndarray, epochs_max: int = 500, batch_frac = 
         t += 1
     print_loss = True
     if print_loss:
+        fig = plt.figure()
         plt.plot(losses)
         plt.grid()
         plt.show()
+        plt.close(fig)
     return best_model
 
 def use_ann_to_predict(model, recalc_grids: list):
@@ -391,14 +393,19 @@ def minmax_normalize(matrix):
         return matrix
 
 
-def calculate_weights(X, y, sample_weights, grid_shape):
+def calculate_weights(X, y, sample_weights, grid_shape, fit_intercept=True):
     """
     Vectorized calculation of weights across sliding windows.
+    Dynamically handles whether the intercept should be fit.
     """
     n_samples, n_features = X.shape
 
-    # 1. Augment X with intercept column immediately (Vectorized)
-    X_aug = np.hstack([X, np.ones((n_samples, 1))])
+    # 1. Augment X with intercept ONLY if it is currently active
+    if fit_intercept:
+        X_aug = np.hstack([X, np.ones((n_samples, 1))])
+    else:
+        X_aug = X  # Use raw X directly
+
     n_features_aug = X_aug.shape[1]
 
     # 2. Reshape to spatial grid
@@ -408,15 +415,13 @@ def calculate_weights(X, y, sample_weights, grid_shape):
 
     all_weights = []
 
-    # 3. Iterate over dimensions (still necessary, but inner work is vectorized)
+    # 3. Iterate over dimensions
     for dim in range(len(grid_shape)):
-    # for dim in range(1):
         window_size = grid_shape[dim] // 2
         num_horizons = window_size + 1
         step_size = max(1, num_horizons // 30)
 
         # --- Create Sliding Windows (Zero Copy) ---
-        # Creates a view of shape: (..., window_len) at the end
         X_windows = sliding_window_view(X_grid, window_shape=window_size, axis=dim)
         y_windows = sliding_window_view(y_grid, window_shape=window_size, axis=dim)
         w_windows = sliding_window_view(sample_weights_grid, window_shape=window_size, axis=dim)
@@ -426,19 +431,11 @@ def calculate_weights(X, y, sample_weights, grid_shape):
         y_windows = y_windows.take(indices=range(0, num_horizons, step_size), axis=dim)
         w_windows = w_windows.take(indices=range(0, num_horizons, step_size), axis=dim)
 
-
         # --- Reshape for Batch Regression ---
-        # Move the batch dimension (sliding dim) to axis 0
         X_windows = np.moveaxis(X_windows, dim, 0)
         y_windows = np.moveaxis(y_windows, dim, 0)
         w_windows = np.moveaxis(w_windows, dim, 0)
 
-        # Prepare dimensions for flattening: (Batch, Samples_in_Window, Features)
-        # Current X_windows: (Batch, Other_Dim, Features, Window_Len)
-        # We want to merge (Other_Dim, Window_Len) -> Samples
-
-        # Move 'Features' to the end so we can flatten everything else
-        # (Batch, Other_Dim, Features, Window_Len) -> (Batch, Other_Dim, Window_Len, Features)
         X_windows = np.moveaxis(X_windows, -2, -1)
 
         # Flatten spatial dimensions
@@ -448,24 +445,24 @@ def calculate_weights(X, y, sample_weights, grid_shape):
         weights_batch = w_windows.reshape(batch_size, -1, 1)
 
         # --- Solve Normal Equations (Batch Mode) ---
-        # w = (X^T X + alpha*I)^-1 X^T y
-
-        # 1. Compute Gram Matrices: (Batch, F, F)
-        # transposing the last two dimensions of X_batch
         XTW = X_batch.transpose(0, 2, 1) * weights_batch.transpose(0, 2, 1)
         XTWX = XTW @ X_batch
         XTWy = XTW @ y_batch[..., None]
+
+        # Dynamic ridge penalty based on current active features
         ridge = 1e-6 * np.eye(n_features_aug)
         XTWX += ridge
 
         # 2. Solve (Fast CPU Vectorized Solver)
-        # np.linalg.solve supports batch dimensions!
         try:
             w_batch = np.linalg.solve(XTWX, XTWy)
             all_weights.append(w_batch.squeeze(-1))
         except np.linalg.LinAlgError:
-            # Fallback for extremely ill-conditioned matrices (rare with ridge)
             w_batch = np.linalg.lstsq(XTWX, XTWy, rcond=None)[0]
-            all_weights.append(w_batch)
+            # lstsq returns 2D array if targets are 1D, so check shape
+            if w_batch.ndim == 3:
+                all_weights.append(w_batch.squeeze(-1))
+            else:
+                all_weights.append(w_batch)
 
     return np.vstack(all_weights)

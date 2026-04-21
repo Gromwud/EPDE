@@ -222,6 +222,7 @@ def lorenz_discovery(noise_level):
                         eq_sparsity_interval=(1e-8, 1e-0))  #
 
     epde_search_obj.equations(only_print=True, num=1)
+    epde_search_obj.visualize_solutions()
 
     return epde_search_obj
 

@@ -699,10 +699,10 @@ class EpdeSearch(object):
                 global_var.reset_data_repr_nn(data = data, derivs = base_derivs, train = False, 
                                               grids = grid, predefined_ann = data_nn, device = self._device)
             else:
-                # epochs_max = 1e5 # 1e4
-                global_var.reset_data_repr_nn(data = data, derivs = base_derivs, epochs_max=ann_epochs_max,
-                                              grids = grid, predefined_ann = None, device = self._device, 
-                                              use_fourier = fourier_layers, fourier_params = fourier_params)
+                epochs_max = 1e5 # 1e4
+                # global_var.reset_data_repr_nn(data = data, derivs = base_derivs, epochs_max=ann_epochs_max,
+                #                               grids = grid, predefined_ann = None, device = self._device,
+                #                               use_fourier = fourier_layers, fourier_params = fourier_params)
 
         if isinstance(additional_tokens, list):
             if not all([isinstance(tf, (TokenFamily, PreparedTokens)) for tf in additional_tokens]):

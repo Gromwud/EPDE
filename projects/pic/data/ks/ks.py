@@ -126,7 +126,7 @@ def ks_discovery(foldername, noise_level):
     # dimensionality = data.ndim - 1
 
     epde_search_obj = EpdeSearch(use_solver=False, multiobjective_mode=True,
-                                      use_pic=True, boundary=5,
+                                      use_pic=True, boundary=(50, 400),
                                       coordinate_tensors=grid, device='cuda')
 
     # epde_search_obj.set_preprocessor(default_preprocessor_type='ANN',

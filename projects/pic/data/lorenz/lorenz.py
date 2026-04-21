@@ -6,6 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname( __file__ ), '../..
 import pickle
 from typing import Tuple, List
 import numpy as np
+import copy
 
 from epde.interface.prepared_tokens import CustomTokens, PhasedSine1DTokens, ConstantToken, CustomEvaluator
 from epde.interface.equation_translator import translate_equation
@@ -20,6 +21,8 @@ from epde.operators.utils.template import CompoundOperator
 
 from epde import TrigonometricTokens, GridTokens, CacheStoredTokens
 import epde.globals as global_var
+from epde.interface.token_family import TFPool
+from epde.structure.main_structures import SoEq, Chromosome
 
 import scipy.io as scio
 
@@ -67,21 +70,120 @@ def compare_equations(correct_symbolic: str, eq_incorrect_symbolic: str,
     return all([correct_eq.vals[var].coefficients_stability < incorrect_eq.vals[var].coefficients_stability for var in
                 all_vars])
 
-
 def prepare_suboperators(fitness_operator: CompoundOperator, operator_params: dict) -> CompoundOperator:
     sparsity = LASSOSparsity()
     coeff_calc = LinRegBasedCoeffsEquation()
 
-    # sparsity = map_operator_between_levels(sparsity, 'gene level', 'chromosome level')
-    # coeff_calc = map_operator_between_levels(coeff_calc, 'gene level', 'chromosome level')
-
-    fitness_operator.set_suboperators({'sparsity': sparsity,
-                                       'coeff_calc': coeff_calc})
-    fitness_cond = lambda x: not getattr(x, 'fitness_calculated')
+    fitness_operator.set_suboperators({'sparsity': sparsity, 'coeff_calc': coeff_calc})
     fitness_operator.params = operator_params
-    fitness_operator = map_operator_between_levels(fitness_operator, 'gene level', 'chromosome level',
-                                                   objective_condition=fitness_cond)
+
+    # Применяем маппинг только для операторов уровня 'gene level'
+    if 'chromosome level' not in fitness_operator._tags:
+        fitness_cond = lambda x: not getattr(x, 'fitness_calculated')
+        fitness_operator = map_operator_between_levels(fitness_operator, 'gene level', 'chromosome level',
+                                                       objective_condition=fitness_cond)
     return fitness_operator
+
+def create_equation_from_str(eq_str, target_var, base_pool, all_vars):
+    families_copy = [copy.deepcopy(fam) for fam in base_pool.families]
+    for fam in families_copy:
+        if hasattr(fam, 'variable') and fam.variable is not None:
+            if fam.variable != target_var:
+                fam.status['demands_equation'] = False
+    temp_pool = TFPool(families_copy)
+    soeq = translate_equation(eq_str, temp_pool, all_vars=[target_var])
+    # Извлекаем уравнение по ключу (имени переменной)
+    eq = soeq.vals[target_var]
+    return eq
+
+def compare_systems(correct_symbolic_list, incorrect_symbolic_list, search_obj, all_vars, fit_operator):
+    metaparams = {('sparsity', var): {'optimizable': False, 'value': 1E-6} for var in all_vars}
+
+    correct_eqs = {}
+    for var, eq_str in zip(all_vars, correct_symbolic_list):
+        eq = create_equation_from_str(eq_str, var, search_obj.pool, all_vars)
+        eq.main_var_to_explain = var
+        eq.metaparameters = metaparams
+        eq.weights_internal = np.ones(len(eq.structure) - 1)
+        eq.weights_internal_evald = True
+        eq.weights_final_evald = True
+        correct_eqs[var] = eq
+
+    correct_system = SoEq(search_obj.pool, metaparams)
+    correct_system.vals = Chromosome(correct_eqs, {})
+    correct_system.moeadd_set = True
+    print("Correct system:")
+    print(correct_system.text_form)
+
+    incorrect_eqs = {}
+    for var, eq_str in zip(all_vars, incorrect_symbolic_list):
+        eq = create_equation_from_str(eq_str, var, search_obj.pool, all_vars)
+        eq.main_var_to_explain = var
+        eq.metaparameters = metaparams
+        eq.weights_internal = np.ones(len(eq.structure) - 1)
+        eq.weights_internal_evald = True
+        eq.weights_final_evald = True
+        incorrect_eqs[var] = eq
+
+    incorrect_system = SoEq(search_obj.pool, metaparams)
+    incorrect_system.vals = Chromosome(incorrect_eqs, {})
+    incorrect_system.moeadd_set = True
+    print("Incorrect system:")
+    print(incorrect_system.text_form)
+
+    fit_operator.apply(correct_system, {})
+    fit_operator.apply(incorrect_system, {})
+
+    correct_stability = [correct_system.vals[var].coefficients_stability for var in all_vars]
+    incorrect_stability = [incorrect_system.vals[var].coefficients_stability for var in all_vars]
+    print("Correct stability:", correct_stability)
+    print("Incorrect stability:", incorrect_stability)
+
+    correct_fitness = [correct_system.vals[var].fitness_value for var in all_vars]
+    incorrect_fitness = [incorrect_system.vals[var].fitness_value for var in all_vars]
+    print("Correct fitness:", correct_fitness)
+    print("Incorrect fitness:", incorrect_fitness)
+
+    return all(cs < incs for cs, incs in zip(correct_stability, incorrect_stability))
+
+def lorenz_test(fit_operator, noise_level=0):
+    t = np.load(os.path.join(os.path.dirname(__file__), 't.npy'))
+    data = np.load(os.path.join(os.path.dirname(__file__), 'lorenz.npy'))
+    end = 1000
+    t = t[:end]
+    x = data[:end, 0]
+    y = data[:end, 1]
+    z = data[:end, 2]
+
+    correct_eqs = [
+        '10.0 * v{power: 1.0} + -10.0 * u{power: 1.0} = du/dx0{power: 1.0}',
+        '28.0 * u{power: 1.0} + -1.0 * u{power: 1.0} * w{power: 1.0} + -1.0 * v{power: 1.0} = dv/dx0{power: 1.0}',
+        '1.0 * u{power: 1.0} * v{power: 1.0} + -2.6666666666666665 * w{power: 1.0} = dw/dx0{power: 1.0}'
+    ]
+    incorrect_eqs = [
+        '10.0 * v{power: 1.0} + -10.0 * u{power: 1.0} + 0.1 * u{power: 1.0} = du/dx0{power: 1.0}',
+        '28.0 * u{power: 1.0} + -1.0 * u{power: 1.0} * w{power: 1.0} + -1.0 * v{power: 1.0} + 0.1 * v{power: 1.0} = dv/dx0{power: 1.0}',
+        '1.0 * u{power: 1.0} * v{power: 1.0} + -2.6666666666666665 * w{power: 1.0} + 0.1 * w{power: 1.0} = dw/dx0{power: 1.0}'
+    ]
+
+    epde_search_obj = EpdeSearch(
+        use_solver=False,
+        multiobjective_mode=True,
+        use_pic=True,
+        boundary=(100,),
+        coordinate_tensors=[t],
+        verbose_params={'show_iter_idx': True},
+        device='cpu'
+    )
+    epde_search_obj.set_preprocessor(default_preprocessor_type='FD', preprocessor_kwargs={})
+    epde_search_obj.create_pool(
+        data=[x, y, z],
+        variable_names=['u', 'v', 'w'],
+        max_deriv_order=1,
+        additional_tokens=[]
+    )
+
+    assert compare_systems(correct_eqs, incorrect_eqs, epde_search_obj, all_vars=['u', 'v', 'w'], fit_operator=fit_operator)
 
 
 def lorenz_discovery(noise_level):
@@ -129,11 +231,34 @@ if __name__ == "__main__":
     from epde.operators.utils.default_parameter_loader import EvolutionaryParams
     print(torch.cuda.is_available())
     # Operator = fitness.SolverBasedFitness # Replace by the developed PIC-based operator.
-    # Operator = fitness.PIC
-    Operator = fitness.L2LRFitness
+    Operator = fitness.PIC
+    #Operator = fitness.L2LRFitness
     params = EvolutionaryParams()
-    operator_params = params.get_default_params_for_operator('DiscrepancyBasedFitnessWithCV') #{"penalty_coeff": 0.2, "pinn_loss_mult": 1e4}
-    print('operator_params ', operator_params)
+    operator_params = params.get_default_params_for_operator('PIC')#'DiscrepancyBasedFitnessWithCV') #{"penalty_coeff": 0.2, "pinn_loss_mult": 1e4}
+    # Operator = fitness.DeepXDEBasedFitness
+    # params = EvolutionaryParams()
+    #
+    # try:
+    #     operator_params = params.get_default_params_for_operator('DeepXDEBasedFitness')
+    # except Exception as e:
+    #     print(f"Предупреждение: не удалось загрузить параметры для DeepXDEBasedFitness: {e}")
+    #     print("Использую ручную конфигурацию.")
+    #     operator_params = {
+    #         "deepxde_config": {
+    #             "net": [50, 50, 50],
+    #             "activation": "tanh",
+    #             "optimizer": "adam",
+    #             "lr": 1e-3,
+    #             "num_domain": 1000,
+    #             "num_boundary": 200,
+    #             "num_initial": 200,
+    #             "epochs": 2000
+    #         },
+    #         "penalty_coeff": 0.2,
+    #         "error_metric": "rmse"
+    #     }
+    # print('operator_params ', operator_params)
     fit_operator = prepare_suboperators(Operator(list(operator_params.keys())), operator_params)
 
     lorenz_discovery(0)
+    #lorenz_test(fit_operator, noise_level=0)

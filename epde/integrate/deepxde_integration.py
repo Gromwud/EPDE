@@ -9,23 +9,6 @@ import epde.globals as global_var
 import deepxde as dde
 from abc import ABC, abstractmethod
 
-
-LOGPATH = "/tmp/deepxde_adapter_debug.txt"
-try:
-    with open(LOGPATH, "a", encoding="utf-8") as _f:
-        _f.write(f"\n=== DeepXDEAdapter log started at PID {os.getpid()} ===\n")
-except Exception:
-    LOGPATH = None
-
-
-def _log(msg):
-    print(msg)
-    sys.stdout.flush()
-    if LOGPATH:
-        with open(LOGPATH, "a", encoding="utf-8") as f:
-            f.write(str(msg) + "\n")
-
-
 class SolverStrategy(ABC):
     @abstractmethod
     def solve(self, eq_list: List[Equation], var_names: List[str],
@@ -86,7 +69,6 @@ class Solver1D(SolverStrategy):
             losshistory, train_state = model.train(epochs=adapter.epochs)  # <-- ИСПРАВЛЕНО
             final_loss = float(losshistory.loss_train[-1][0]) if losshistory.loss_train else np.nan
         except Exception as e:
-            _log(f"[DeepXDEAdapter] Training failed: {e}")
             y_pred = [np.full(data.shape, np.nan) for data in data_list]
             return y_pred, np.nan
 
@@ -159,19 +141,16 @@ class Solver2D(SolverStrategy):
         net = dde.nn.FNN(layer_size, adapter.activation, adapter.kernel_initializer)
         model = dde.Model(data_obj, net)
         model.compile(adapter.optimizer, lr=adapter.lr)
-        _log("[DeepXDEAdapter] Starting training (2D system)")
         try:
             losshistory, train_state = model.train(epochs=adapter.epochs)  # <- исправлено
             final_loss = float(losshistory.loss_train[-1][0]) if losshistory.loss_train else np.nan
         except Exception as e:
-            _log(f"[DeepXDEAdapter] Training failed: {e}")
             y_pred = [np.full(data.shape, np.nan) for data in data_list]
             return y_pred, np.nan
 
         coords_pred = np.stack([x.flatten(), t.flatten()], axis=1)
         pred = model.predict(coords_pred)
         solutions = [pred[:, i].reshape(-1) for i in range(len(var_names))]
-        _log(f"[DeepXDEAdapter] Training complete, final_loss {final_loss}")
         return solutions, final_loss
 
 
@@ -254,19 +233,16 @@ class Solver3D(SolverStrategy):
         net = dde.nn.FNN(layer_size, adapter.activation, adapter.kernel_initializer)
         model = dde.Model(data_obj, net)
         model.compile(adapter.optimizer, lr=adapter.lr)
-        _log("[DeepXDEAdapter] Starting training (3D system)")
         try:
             losshistory, train_state = model.train(epochs=adapter.epochs)  # <- исправлено
             final_loss = float(losshistory.loss_train[-1][0]) if losshistory.loss_train else np.nan
         except Exception as e:
-            _log(f"[DeepXDEAdapter] Training failed: {e}")
             y_pred = [np.full(data.shape, np.nan) for data in data_list]
             return y_pred, np.nan
 
         coords_pred = np.stack([x.flatten(), y.flatten(), t.flatten()], axis=1)
         pred = model.predict(coords_pred)
         solutions = [pred[:, i].reshape(-1) for i in range(len(var_names))]
-        _log(f"[DeepXDEAdapter] Training complete, final_loss {final_loss}")
         return solutions, final_loss
 
 
@@ -308,7 +284,6 @@ class DeepXDEAdapter:
                     self.coord_map[name] = spatial_dim
                 else:
                     self.coord_map[name] = i - 1
-        _log(f"[DeepXDEAdapter] coord_map = {self.coord_map}")
 
     def _equation_system_to_pde_func(self, dde, eq_list, var_names):
         var_idx_map = {name: i for i, name in enumerate(var_names)}
@@ -392,7 +367,6 @@ class DeepXDEAdapter:
     def solve(self, equation_or_system, grids: list, data):
         dim = len(grids)
         solver = self._solvers.get(dim)
-        _log(f"[DeepXDEAdapter] Detected dimension: {dim}")
 
         keys, _ = global_var.grid_cache.get_all(mode='numpy')
         self._set_coordinate_info(keys)

@@ -39,7 +39,7 @@ jobs:
 
       - name: Run split tests
         run: |
-          pytest tests/functional/ -n auto \
+          pytest tests/functional/ \
             --splits 4 --group ${{ matrix.split }} \
             --durations=20 \
             --timeout=600 \

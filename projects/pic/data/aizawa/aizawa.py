@@ -23,7 +23,6 @@ import epde.globals as global_var
 
 import scipy.io as scio
 
-
 def load_pretrained_PINN(ann_filename):
     try:
         with open(ann_filename, 'rb') as data_input_file:
@@ -47,8 +46,6 @@ def compare_equations(correct_symbolic: str, eq_incorrect_symbolic: str,
     for var in all_vars:
         correct_eq.vals[var].main_var_to_explain = var
         correct_eq.vals[var].metaparameters = metaparams
-        correct_eq.vals[var].weights_internal = np.ones(len(correct_eq.vals[var].structure) - 1)
-        correct_eq.vals[var].weights_internal_evald = True
     print(correct_eq.text_form)
 
     incorrect_eq = translate_equation(eq_incorrect_symbolic, search_obj.pool,
@@ -56,8 +53,6 @@ def compare_equations(correct_symbolic: str, eq_incorrect_symbolic: str,
     for var in all_vars:
         incorrect_eq.vals[var].main_var_to_explain = var
         incorrect_eq.vals[var].metaparameters = metaparams
-        incorrect_eq.vals[var].weights_internal = np.ones(len(incorrect_eq.vals[var].structure) - 1)
-        incorrect_eq.vals[var].weights_internal_evald = True
     print(incorrect_eq.text_form)
 
     fit_operator.apply(correct_eq, {})
@@ -87,95 +82,38 @@ def prepare_suboperators(fitness_operator: CompoundOperator, operator_params: di
                                                    objective_condition=fitness_cond)
     return fitness_operator
 
-def ns_data(filename: str):
-    data = scio.loadmat('cylinder_nektar_wake.mat')
-    U_star = data['U_star']  # N x 2 x T
-    P_star = data['p_star']  # N x T
-    t_star = data['t']  # T x 1
-    X_star = data['X_star']  # N x 2
 
-    N = X_star.shape[0]
-    T = t_star.shape[0]
+def aizawa_discovery(noise_level):
+    data_file = os.path.join(os.path.dirname(__file__), 'aizawa.npz')
+    data = np.load(data_file)
+    t = data['t']
+    u = data['u']
 
-    t_train = 50
+    x = u[..., 0]
+    y = u[..., 1]
+    z = u[..., 2]
+    dimensionality = x.ndim - 1
 
-    x = np.unique(X_star[:, 0:1].flatten())  # N x T
-    y = np.unique(X_star[:, 1:2].flatten()) # N x T
-    t = t_star.flatten()  # N x T
+    trig_tokens = TrigonometricTokens(freq=(2 - 1e-8, 2 + 1e-8),
+                                      dimensionality=dimensionality)
+    grid_tokens = GridTokens(['x_0', ], dimensionality=dimensionality, max_power=2)
 
-    u = U_star[:, 0, :].T.reshape(*t.shape, *y.shape, *x.shape)[:t_train] # N x T
-    v = U_star[:, 1, :].T.reshape(*t.shape, *y.shape, *x.shape)[:t_train] # N x T
-    p = P_star.T.reshape(*t.shape, *y.shape, *x.shape)[:t_train]   # N x T
-
-    grids = np.meshgrid(t[:t_train], y, x, indexing = 'ij')  # np.stack(, axis = 2) , axis = 2)
-    data = [u, v, p]
-    return grids, data
-
-
-def ns_test(operator: CompoundOperator, foldername: str, noise_level: int = 0):
-    # Test scenario to evaluate performance on Allen-Cahn equation
-    eq_ac_symbolic = '0.0001 * d^2u/dx1^2{power: 1.0} + -5.0 * u{power: 3.0} + 5.0 * u{power: 1.0} + 0.0 = du/dx0{power: 1.0}'
-    eq_ac_incorrect = '4.976781518840499 * u{power: 1.0} + 0.0001 * d^2u/dx1^2{power: 1.0} + -4.974425220166616 * u{power: 3.0} + 0.0 * du/dx1{power: 1.0} * d^2u/dx0^2{power: 1.0} + 0.002262543822130977 = du/dx0{power: 1.0}'
-
-    grid, data = ns_data(os.path.join(foldername, 'cylinder_nektar_wake.mat'))
-    # noised_data = noise_data(data, noise_level)
-    # data_nn = load_pretrained_PINN(os.path.join(foldername, 'ac_ann_pretrained.pickle'))
-
-    # print('Shapes:', data.shape, grid[0].shape)
-    dimensionality = 1
-
-    epde_search_obj = EpdeSearch(use_solver=False, use_pic=True, boundary=10,
-                                 coordinate_tensors=grid, verbose_params={'show_iter_idx': True},
-                                 device='cpu')
+    epde_search_obj = EpdeSearch(use_solver=False, multiobjective_mode=True, use_pic=True, boundary=15,
+                                 coordinate_tensors=(t,), verbose_params={'show_iter_idx': True},
+                                 device='cuda')
 
     epde_search_obj.set_preprocessor(default_preprocessor_type='FD',
                                      preprocessor_kwargs={})
 
-    epde_search_obj.create_pool(data=data, variable_names=["u", "v", "p"], max_deriv_order=(1, 2, 2),
-                                additional_tokens=[])#, data_nn=data_nn
+    popsize = 16
+    epde_search_obj.set_moeadd_params(population_size=popsize, training_epochs=50)
 
-    assert compare_equations([eq_ac_symbolic] * 3, [eq_ac_incorrect] * 3, epde_search_obj)
+    factors_max_number = {'factors_num': [1, 2], 'probas' : [0.8, 0.2]}
 
-
-def ns_discovery(foldername, noise_level):
-    grid, data = ns_data(os.path.join(foldername, 'cylinder_nektar_wake.mat'))
-    # noised_data = noise_data(data, noise_level)
-    data_nn = load_pretrained_PINN(os.path.join(foldername, f'kdv_{noise_level}_ann.pickle'))
-
-    # dimensionality = data.ndim - 1
-
-    epde_search_obj = EpdeSearch(use_solver=True, multiobjective_mode=True,
-                                      use_pic=True, boundary=[21, 21, 46],
-                                      coordinate_tensors=grid, device='cuda')
-
-    # epde_search_obj.set_preprocessor(default_preprocessor_type='ANN',
-    #                                     preprocessor_kwargs={'epochs_max' : 1e3})
-    epde_search_obj.set_preprocessor(default_preprocessor_type='FD',
-                                     preprocessor_kwargs={})
-    popsize = 64
-
-    epde_search_obj.set_moeadd_params(population_size=popsize,
-                                      training_epochs=1)
-
-    custom_grid_tokens = CacheStoredTokens(token_type='grid',
-                                                token_labels=['t', 'x'],
-                                                token_tensors={'t': grid[0], 'x': grid[1]},
-                                                params_ranges={'power': (1, 1)},
-                                                params_equality_ranges=None)
-
-    trig_params_ranges = {'power': (1, 1)}
-    trig_params_equal_ranges = {}
-
-    # trig_tokens = TrigonometricTokens(dimensionality=dimensionality, freq = (0.999, 1.001))
-
-    factors_max_number = {'factors_num': [1, 2], 'probas': [0.8, 0.2]}
-
-    bounds = (1e-12, 1e-0)
-    epde_search_obj.fit(data=data, variable_names=["u", "v", "p"], max_deriv_order=(1, 2, 2), derivs=None,
-                        equation_terms_max_number=20, data_fun_pow=1,
-                        additional_tokens=[],
+    epde_search_obj.fit(data=[x, y, z], variable_names=['x', 'y', 'z'], max_deriv_order=(1,),
+                        equation_terms_max_number=7, data_fun_pow=3, additional_tokens=[],
                         equation_factors_max_number=factors_max_number,
-                        eq_sparsity_interval=bounds, fourier_layers=False) # , data_nn=data_nn
+                        eq_sparsity_interval=(1e-8, 1e-0))  #
 
     epde_search_obj.equations(only_print=True, num=1)
     epde_search_obj.visualize_solutions()
@@ -195,9 +133,4 @@ if __name__ == "__main__":
     print('operator_params ', operator_params)
     fit_operator = prepare_suboperators(Operator(list(operator_params.keys())), operator_params)
 
-    # Paths
-    directory = os.path.dirname(os.path.realpath(__file__))
-    ns_folder_name = os.path.join(directory)
-
-    # ns_test(fit_operator, ns_folder_name, 0)
-    ns_discovery(ns_folder_name, 0)
+    aizawa_discovery(0)

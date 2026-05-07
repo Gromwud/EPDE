@@ -1,0 +1,80 @@
+[
+  {
+    "cluster_id": 0,
+    "size": 1,
+    "equations": [
+      {
+        "equation": "-0.19897061286201168 * u{power: 2.0} * du/dx0{power: 1.0} + 0.19924962139588664 * du/dx0{power: 1.0} + -0.9995865401882077 * u{power: 1.0} + -2.2009752583118415e-06 = d^2u/dx0^2{power: 1.0}",
+        "parameters": "{'terms_number': {'optimizable': False, 'value': 5}, 'max_factors_in_term': {'optimizable': False, 'value': {'factors_num': [1, 2], 'probas': [0.65, 0.35]}}}"
+      }
+    ]
+  },
+  {
+    "cluster_id": 1,
+    "size": 2,
+    "equations": [
+      {
+        "equation": "0.8226127652182991 * u{power: 1.0} + -1.0180306306757452 * u{power: 1.0} * sin{power: 1.0, freq: 1.9999999994721978, dim: 0.0} + -0.5590436731718349 * du/dx0{power: 1.0} + -0.0005534513544850218 = du/dx0{power: 1.0} * cos{power: 1.0, freq: 1.9999999923412444, dim: 0.0}",
+        "parameters": "{'terms_number': {'optimizable': False, 'value': 5}, 'max_factors_in_term': {'optimizable': False, 'value': {'factors_num': [1, 2], 'probas': [0.65, 0.35]}}}"
+      },
+      {
+        "equation": "0.8585403829828374 * u{power: 1.0} + 0.0033586516202066914 * d^2u/dx0^2{power: 1.0} * x_0{power: 1.0, dim: 0.0} + -1.0288350240287434 * u{power: 1.0} * sin{power: 1.0, freq: 1.9999999994721978, dim: 0.0} + -0.5630716700535501 * du/dx0{power: 1.0} + 0.00022726808309571985 = du/dx0{power: 1.0} * cos{power: 1.0, freq: 1.9999999923412444, dim: 0.0}",
+        "parameters": "{'terms_number': {'optimizable': False, 'value': 5}, 'max_factors_in_term': {'optimizable': False, 'value': {'factors_num': [1, 2], 'probas': [0.65, 0.35]}}}"
+      }
+    ]
+  },
+  {
+    "cluster_id": 2,
+    "size": 2,
+    "equations": [
+      {
+        "equation": "-0.28392871414330245 * du/dx0{power: 1.0} * cos{power: 1.0, freq: 2.0000000087356833, dim: 0.0} + -0.18193048585748958 * u{power: 3.0} + -0.6492502793591604 * u{power: 1.0} + 0.005262293411287446 * u{power: 3.0} * x_0{power: 1.0, dim: 0.0} + -0.0014265938909668557 = d^2u/dx0^2{power: 1.0}",
+        "parameters": "{'terms_number': {'optimizable': False, 'value': 5}, 'max_factors_in_term': {'optimizable': False, 'value': {'factors_num': [1, 2], 'probas': [0.65, 0.35]}}}"
+      },
+      {
+        "equation": "-0.17259129384463603 * du/dx0{power: 1.0} * cos{power: 1.0, freq: 2.000000006828062, dim: 0.0} + -0.9413211951372115 * u{power: 1.0} + -0.002238893519522557 = d^2u/dx0^2{power: 1.0}",
+        "parameters": "{'terms_number': {'optimizable': False, 'value': 5}, 'max_factors_in_term': {'optimizable': False, 'value': {'factors_num': [1, 2], 'probas': [0.65, 0.35]}}}"
+      }
+    ]
+  },
+  {
+    "cluster_id": 3,
+    "size": 2,
+    "equations": [
+      {
+        "equation": "0.09750489330425688 * u{power: 2.0} * d^2u/dx0^2{power: 1.0} + -0.712340883636121 * u{power: 1.0} + -0.2332025153447988 * du/dx0{power: 1.0} * cos{power: 1.0, freq: 2.0000000016510193, dim: 0.0} + 0.0014615213898829572 = d^2u/dx0^2{power: 1.0}",
+        "parameters": "{'terms_number': {'optimizable': False, 'value': 5}, 'max_factors_in_term': {'optimizable': False, 'value': {'factors_num': [1, 2], 'probas': [0.65, 0.35]}}}"
+      },
+      {
+        "equation": "0.10104525829181621 * du/dx0{power: 1.0} + -0.9879945046839849 * u{power: 1.0} + -0.10079672209473495 * u{power: 1.0} * cos{power: 1.0, freq: 1.999999999781979, dim: 0.0} + -0.0007510043714442768 = d^2u/dx0^2{power: 1.0}",
+        "parameters": "{'terms_number': {'optimizable': False, 'value': 5}, 'max_factors_in_term': {'optimizable': False, 'value': {'factors_num': [1, 2], 'probas': [0.65, 0.35]}}}"
+      }
+    ]
+  },
+  {
+    "cluster_id": 4,
+    "size": 5,
+    "equations": [
+      {
+        "equation": "-0.622646952522108 * u{power: 2.0} + 0.15805031045195372 * x_0{power: 1.0, dim: 0.0} * cos{power: 1.0, freq: 2.0000000008606427, dim: 0.0} + 0.8202616210492935 = du/dx0{power: 1.0} * u{power: 1.0}",
+        "parameters": "{'terms_number': {'optimizable': False, 'value': 5}, 'max_factors_in_term': {'optimizable': False, 'value': {'factors_num': [1, 2], 'probas': [0.65, 0.35]}}}"
+      },
+      {
+        "equation": "-4.419271560143678 * u{power: 3.0} + -0.16190877125848774 = x_0{power: 1.0, dim: 0.0} * d^2u/dx0^2{power: 1.0}",
+        "parameters": "{'terms_number': {'optimizable': False, 'value': 5}, 'max_factors_in_term': {'optimizable': False, 'value': {'factors_num': [1, 2], 'probas': [0.65, 0.35]}}}"
+      },
+      {
+        "equation": "-0.3711349631126501 * u{power: 3.0} + -0.5552304378683172 * du/dx0{power: 1.0} * cos{power: 1.0, freq: 1.9999999923412444, dim: 0.0} + 0.007627468834888582 = d^2u/dx0^2{power: 1.0}",
+        "parameters": "{'terms_number': {'optimizable': False, 'value': 5}, 'max_factors_in_term': {'optimizable': False, 'value': {'factors_num': [1, 2], 'probas': [0.65, 0.35]}}}"
+      },
+      {
+        "equation": "0.005205693710023318 * x_0{power: 2.0, dim: 0.0} * d^2u/dx0^2{power: 1.0} + 0.09244590005174765 * u{power: 1.0} * x_0{power: 1.0, dim: 0.0} + -1.319276901168213 * u{power: 1.0} + -0.0007993645424237213 = d^2u/dx0^2{power: 1.0}",
+        "parameters": "{'terms_number': {'optimizable': False, 'value': 5}, 'max_factors_in_term': {'optimizable': False, 'value': {'factors_num': [1, 2], 'probas': [0.65, 0.35]}}}"
+      },
+      {
+        "equation": "-0.9751315663993726 * u{power: 2.0} + -0.0009931565524505205 * x_0{power: 2.0, dim: 0.0} * cos{power: 1.0, freq: 1.9999999998826512, dim: 0.0} + -0.0432383918465353 = d^2u/dx0^2{power: 1.0} * u{power: 1.0}",
+        "parameters": "{'terms_number': {'optimizable': False, 'value': 5}, 'max_factors_in_term': {'optimizable': False, 'value': {'factors_num': [1, 2], 'probas': [0.65, 0.35]}}}"
+      }
+    ]
+  }
+]

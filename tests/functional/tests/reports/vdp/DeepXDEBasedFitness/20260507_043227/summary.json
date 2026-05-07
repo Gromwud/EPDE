@@ -1,0 +1,6 @@
+{
+  "scenario": "VanDerPol",
+  "operator": "DeepXDEBasedFitness",
+  "noise_level": 0,
+  "elapsed_sec": 30.691246983999918
+}

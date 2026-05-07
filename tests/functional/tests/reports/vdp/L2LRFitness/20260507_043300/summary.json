@@ -1,0 +1,6 @@
+{
+  "scenario": "VanDerPol",
+  "operator": "L2LRFitness",
+  "noise_level": 0,
+  "elapsed_sec": 32.66705521699987
+}

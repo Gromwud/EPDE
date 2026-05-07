@@ -1,6 +1,4 @@
-# conftest.py
 from pathlib import Path
-from datetime import datetime
 import pytest
 
 def pytest_addoption(parser):
@@ -22,13 +20,22 @@ def pytest_addoption(parser):
         default="reports",
         help="Base directory for reports",
     )
+    parser.addoption(
+        "--operators",
+        action="store",
+        default="DeepXDEBasedFitness,PIC,L2LRFitness",
+        help="Comma-separated list of operators to test",
+    )
 
 @pytest.fixture
 def runtime_options(request):
+    operators = request.config.getoption("--operators")
+    operator_list = [op.strip() for op in operators.split(",") if op.strip()]
     return {
         "discovery": request.config.getoption("--discovery"),
         "report": request.config.getoption("--report"),
         "report_dir": Path(request.config.getoption("--report-dir")),
+        "operators": operator_list,
     }
 
 def pytest_configure(config):

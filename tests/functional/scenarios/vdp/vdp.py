@@ -1,8 +1,9 @@
-# tests/scenarios/vdp.py
 import os
+import torch
 import numpy as np
 from datetime import datetime
 import json
+import pytest
 from epde.interface.interface import EpdeSearch
 from epde import TrigonometricTokens, GridTokens
 from tests.functional.templates import EquationTestTemplate
@@ -57,7 +58,7 @@ class VanDerPolTest(EquationTestTemplate):
             boundary=2,
             coordinate_tensors=[t],
             verbose_params={"show_iter_idx": True},
-            device="cpu",
+            device='cuda' if torch.cuda.is_available() else 'cpu',
         )
         epde_search_obj.set_preprocessor(default_preprocessor_type="FD", preprocessor_kwargs={})
         epde_search_obj.create_pool(
@@ -68,6 +69,7 @@ class VanDerPolTest(EquationTestTemplate):
         )
         return epde_search_obj
 
+    @pytest.mark.slow
     def run_discovery(self, search_obj, report_dir=None, operator_name="unknown"):
         data = self.load_data()
         noised_data = self.noise_data(data, self.noise_level)
@@ -100,30 +102,21 @@ class VanDerPolTest(EquationTestTemplate):
                 encoding="utf-8",
             )
 
-            raw_clusters = search_obj.equations(only_print=False, num=5)  # список кластеров
+            raw_clusters = search_obj.equations(only_print=False, num=5)
 
-            # Преобразуем в удобную структуру
             clusters_json = []
             for idx, cluster in enumerate(raw_clusters):
                 equations_list = []
                 for eq in cluster:
-                    text = eq.text_form  # строка вида "уравнение\n{параметры}"
+                    text = eq.text_form
                     if "\n" in text:
                         eq_part, meta_part = text.split("\n", 1)
                     else:
                         eq_part, meta_part = text, None
 
-                    # Безопасно парсим словарь параметров
-                    meta = None
-                    if meta_part:
-                        try:
-                            meta = ast.literal_eval(meta_part)
-                        except Exception:
-                            meta = meta_part  # на случай нестандартного формата
-
                     equations_list.append({
                         "equation": eq_part.strip(),
-                        "parameters": meta
+                        "parameters": meta_part
                     })
                 clusters_json.append({
                     "cluster_id": idx,

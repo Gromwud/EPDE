@@ -16,19 +16,24 @@ class FitnessOperatorFactory:
             raise ValueError(f"Unknown operator: {name}")
 
         operator = cls_map[name](list(params.keys()))
+        sparsity = LASSOSparsity()
+        coeff_calc = LinRegBasedCoeffsEquation()
+        if name == 'PIC':
+            sparsity = map_operator_between_levels(sparsity, 'gene level', 'chromosome level')
+            coeff_calc = map_operator_between_levels(coeff_calc, 'gene level', 'chromosome level')
+
         operator.set_suboperators({
-            "sparsity": LASSOSparsity(),
-            "coeff_calc": LinRegBasedCoeffsEquation(),
+            "sparsity": sparsity,
+            "coeff_calc": coeff_calc,
         })
         operator.params = params
 
-        fitness_cond = lambda x: not getattr(x, "fitness_calculated", False)
-        operator = map_operator_between_levels(
-            operator,
-            'gene level',
-            "chromosome level",
-            objective_condition=fitness_cond,
-        )
+        if 'chromosome level' not in operator._tags:
+            fitness_cond = lambda x: not getattr(x, "fitness_calculated", False)
+            operator = map_operator_between_levels(
+                operator,
+                'gene level',
+                "chromosome level",
+                objective_condition=fitness_cond,
+            )
         return operator
-    #"chromosome level"
-    #"gene level"

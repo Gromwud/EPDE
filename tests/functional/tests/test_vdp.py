@@ -1,35 +1,40 @@
 import pytest
-import requests
 from tests.functional.operator_factory import FitnessOperatorFactory
 from tests.functional.scenarios.vdp.vdp import VanDerPolTest
 
 from epde.operators.utils.default_parameter_loader import EvolutionaryParams
 
 operator_params_deepxde = {
-            "deepxde_config": {
-                "net": [50, 50, 50],
-                "activation": "tanh",
-                "optimizer": "adam",
-                "lr": 1e-3,
-                "num_domain": 1000,
-                "num_boundary": 200,
-                "num_initial": 200,
-                "epochs": 2000
-            },
-            "penalty_coeff": 0.2,
-            "error_metric": "rmse"
-        }
+    "deepxde_config": {
+        "net": [50, 50, 50],
+        "activation": "tanh",
+        "optimizer": "adam",
+        "lr": 1e-3,
+        "num_domain": 1000,
+        "num_boundary": 200,
+        "num_initial": 200,
+        "epochs": 2000,
+    },
+    "penalty_coeff": 0.2,
+    "error_metric": "rmse",
+}
 
-operator_params_l2lr = EvolutionaryParams().get_default_params_for_operator('DiscrepancyBasedFitnessWithCV')
+operator_params_l2lr = EvolutionaryParams().get_default_params_for_operator(
+    "DiscrepancyBasedFitnessWithCV"
+)
 
-@pytest.mark.functional
-@pytest.mark.parametrize("operator_name, params", [
+ALL_CASES = [
     ("DeepXDEBasedFitness", operator_params_deepxde),
     ("L2LRFitness", operator_params_l2lr),
-])
+]
 
 @pytest.mark.functional
+@pytest.mark.parametrize("operator_name, params", ALL_CASES)
 def test_vdp(operator_name, params, runtime_options):
+    import epde.globals as global_var
+    global_var.solution_guess_nn = None
+    if operator_name not in runtime_options["operators"]:
+        pytest.skip(f"{operator_name} skipped by --operators")
     operator = FitnessOperatorFactory.create(operator_name, params)
     scenario = VanDerPolTest(noise_level=0)
 

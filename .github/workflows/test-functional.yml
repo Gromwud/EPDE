@@ -3,9 +3,9 @@ name: EPDE Core Tests
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ DeepXDEFitness ]
   pull_request:
-    branches: [ main ]
+    branches: [ DeepXDEFitness ]
 
 jobs:
   test:

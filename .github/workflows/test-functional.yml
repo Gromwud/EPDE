@@ -36,8 +36,10 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Run split tests
-        run: pytest -n auto
-               --splits 4 --group ${{ matrix.split }}
-               --durations=20
-               --timeout=600          # 10 min per group
-               -m "not slow"          # skip slow discovery tests
+        run: |
+          pytest -n auto \
+            --splits 4 --group ${{ matrix.split }} \
+            --durations=20 \
+            --timeout=600 \
+            -m "not slow" \
+            --operators ${{ matrix.operator }}

@@ -117,7 +117,7 @@ class L2LRFitness(CompoundOperator):
         None
         """
         self_args, subop_args = self.parse_suboperator_args(arguments=arguments)
-        # self.suboperators['sparsity'].apply(objective, subop_args['sparsity'])
+
         if force_out_of_place:
             self.suboperators['sparsity'].apply(objective, subop_args['sparsity'])
             if all(objective.weights_internal == 0):
@@ -128,6 +128,8 @@ class L2LRFitness(CompoundOperator):
             _, target, features = objective.evaluate(normalize=False, return_val=False)
         else:
             _, target, features = objective.evaluate(normalize=True, return_val=False)
+
+        # self.suboperators['sparsity'].apply(objective, subop_args['sparsity'])
         # _, target, features = objective.evaluate(normalize=False, return_val=False)
 
         self.get_g_fun_vals()
@@ -146,8 +148,8 @@ class L2LRFitness(CompoundOperator):
 
         fitness_value = rl_error
 
-        if force_out_of_place:
-            return fitness_value
+        # if force_out_of_place:
+        #     return fitness_value
 
         objective.aic = None
         objective.aic_calculated = True
@@ -156,7 +158,7 @@ class L2LRFitness(CompoundOperator):
         if hasattr(objective, '_cached_sw_weights') and objective._cached_sw_weights is not None:
             weights = objective._cached_sw_weights
         else:
-            weights = calculate_weights(features, target, self.g_fun_vals, data_shape)
+            weights = calculate_weights(features, target, self.g_fun_vals, data_shape, objective.weights_final[-1] != 0)
         weights_arr = np.array(weights)
         std = weights_arr.std(axis=0, ddof=1)
         mu = weights_arr.mean(axis=0)
@@ -164,9 +166,11 @@ class L2LRFitness(CompoundOperator):
         # Safe division
         with np.errstate(divide='ignore', invalid='ignore'):
             cv = (std ** 2) / (mu ** 2)
-            cv[mu == 0] = 0.0  # Handle zero mean
 
-        total_lr = sum(cv[:-1]) / len(data_shape)
+        total_lr = sum(cv) / len(data_shape)
+
+        if force_out_of_place:
+            return fitness_value * total_lr
 
         objective.fitness_calculated = True
         objective.fitness_value = fitness_value
@@ -428,7 +432,7 @@ class DeepXDEBasedFitness(CompoundOperator):
                 raise ValueError("NaN loss")
 
             if isinstance(objective, SoEq):
-                for idx, (var_name, eq) in enumerate(objective.vals.items()):
+                for idx, (var_name, eq) in enumerate({val: objective.vals[val] for val in objective.vars_to_describe}.items()):
                     err = self._compute_error(solution_list[idx], data_list[idx], eq)
                     if force_out_of_place:
                         pass
@@ -510,11 +514,13 @@ def plot_data_vs_solution(grid, data, solution):
         ax.set_xlabel("x1")
         ax.set_ylabel("x2")
         plt.show()
+        plt.close(fig)
     if grid.shape[1]==1:
         fig = plt.figure()
         plt.scatter(grid.reshape(-1), solution.reshape(-1), color = 'r')
         plt.scatter(grid.reshape(-1), data.reshape(-1), color = 'k')
         plt.show()
+        plt.close(fig)
     else:
         raise Exception('Infeasible dimensionality of the input dataset.')
 

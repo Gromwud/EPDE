@@ -379,8 +379,8 @@ class DeepXDEAdapter:
             else:
                 data_list = data
         elif isinstance(equation_or_system, SoEq):
-            eq_list = list(equation_or_system.vals.values())
             var_names = equation_or_system.vars_to_describe
+            eq_list = [equation_or_system.vals[var] for var in equation_or_system.vars_to_describe]
             if isinstance(data, np.ndarray):
                 raise ValueError("For SoEq, data must be a list of arrays (one per variable).")
             data_list = data

@@ -130,8 +130,8 @@ def ac_discovery(foldername, noise_level):
 
     dimensionality = data.ndim - 1
 
-    epde_search_obj = EpdeSearch(use_solver=False, multiobjective_mode=True,
-                                      use_pic=True, boundary=(5, 10),
+    epde_search_obj = EpdeSearch(use_solver=True, multiobjective_mode=True,
+                                      use_pic=True, boundary=(5, 10), verbose_params = {'show_iter_idx' : True, 'show_iter_fitness' : True},
                                       coordinate_tensors=grid, device='cuda')
 
     # epde_search_obj.set_preprocessor(default_preprocessor_type='ANN',
@@ -194,7 +194,7 @@ if __name__ == "__main__":
                 "num_domain": 1000,
                 "num_boundary": 200,
                 "num_initial": 200,
-                "epochs": 2000
+                "iterations": 2
             },
             "penalty_coeff": 0.2,
             "error_metric": "rmse"

@@ -260,7 +260,7 @@ def kdv_discovery(foldername, noise_level):
     #                                     preprocessor_kwargs={'epochs_max' : 1e3})
     epde_search_obj.set_preprocessor(default_preprocessor_type='FD',
                                      preprocessor_kwargs={})
-    popsize = 8
+    popsize = 16
 
     epde_search_obj.set_moeadd_params(population_size=popsize,
                                       training_epochs=5)
@@ -286,8 +286,8 @@ def kdv_discovery(foldername, noise_level):
 
     bounds = (1e-5, 1e-2)
     epde_search_obj.fit(data=noised_data, variable_names=['u', ], max_deriv_order=(2, 3), derivs=None,
-                        equation_terms_max_number=5, data_fun_pow=3,
-                        additional_tokens=[trig_tokens], #custom_trig_tokens
+                        equation_terms_max_number=10, data_fun_pow=3,
+                        additional_tokens=[custom_trig_tokens], #custom_trig_tokens
                         equation_factors_max_number=factors_max_number,
                         eq_sparsity_interval=bounds, fourier_layers=False) # , data_nn=data_nn
 
@@ -316,7 +316,7 @@ def kdv_h_discovery(foldername, noise_level):
     popsize = 8
 
     epde_search_obj.set_moeadd_params(population_size=popsize,
-                                      training_epochs=15)
+                                      training_epochs=1)
 
 
     custom_grid_tokens = CacheStoredTokens(token_type='grid',

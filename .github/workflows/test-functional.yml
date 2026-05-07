@@ -16,6 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11"]
+        operator: ["L2LRFitness"]
         split: [1, 2, 3, 4]
 
     steps:

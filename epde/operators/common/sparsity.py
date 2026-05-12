@@ -226,10 +226,18 @@ class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
         mu = weights_arr.mean(axis=0)
 
         with np.errstate(divide='ignore', invalid='ignore'):
-            cv = (std ** 2) / (mu ** 2)
-            cv[mu == 0] = 0.0
+            cv = (std ** 2) / (mu ** 2 + std ** 2)
 
         return np.nan_to_num(cv)
+
+    # def get_cv(self, weights):
+    #     weights_arr = np.asarray(weights)
+    #     q1, q3 = np.percentile(weights_arr, [25, 75], axis=0)
+    #     spread = (q3 - q1) / 1.349  # IQR/1.349 ≈ σ for Gaussian
+    #     center = np.median(weights_arr, axis=0)
+    #     with np.errstate(divide='ignore', invalid='ignore'):
+    #         cv = spread ** 2 / (center ** 2 + spread ** 2)
+    #     return np.nan_to_num(cv)
 
     def fit(self, X, y, sample_weights=None):
         n_samples, n_features = X.shape
@@ -244,8 +252,7 @@ class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
 
         # Precompute static operations for speed
         norm_sq_features = np.sum(X_aug ** 2, axis=0)
-        X_T_y = X_aug.T @ y
-        max_corr = np.max(np.abs(X_T_y))  # Global max correlation anchors the penalty
+        X_T_y = X_aug.T @ y  # Cached once; slice by active_mask each outer iter.
 
         outer_iteration = 0
         max_outer_iters = total_features  # Max possible eliminations
@@ -267,16 +274,24 @@ class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
                 grid_shape=self.grid_shape,
                 fit_intercept=intercept_is_active
             )
-            self.cached_weights_ = weights
+
+            # Slice data for the CD run
+            X_active = X_aug[:, active_mask]
+            norm_sq_active = norm_sq_features[active_mask]
+
+            # Anchor the penalty to the max correlation on the SURVIVING subspace
+            # so threshold scale tracks the current problem as features drop.
+            max_corr = np.max(np.abs(X_T_y[active_mask]))
 
             # 3. CV performs as adaptive alpha
             active_cv = self.get_cv(weights)
+            # Tackle the most physically unstable feature first so unstable
+            # terms get shrunk to zero before they pollute the residual.
+            cv_order = np.argsort(active_cv)[::-1]
             active_thresholds = active_cv * max_corr
 
-            # Initialize coefficients and slice data for the CD run
+            # Initialize coefficients
             active_coef = weights.mean(axis=0)
-            X_active = X_aug[:, active_mask]
-            norm_sq_active = norm_sq_features[active_mask]
 
             residual = y - (X_active @ active_coef)
 
@@ -284,10 +299,11 @@ class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
             # INNER LOOP: Pure Coordinate Descent on the Stabilized Library
             # =================================================================
             cd_iteration = 0
+            killed_feature = False
             while cd_iteration < self.max_iter:
                 max_change = 0.0
 
-                for j in range(len(active_coef)):
+                for j in cv_order:
                     old_coef = active_coef[j]
                     norm_sq = norm_sq_active[j]
 
@@ -301,12 +317,22 @@ class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
                     residual -= (new_coef - old_coef) * X_active[:, j]
                     active_coef[j] = new_coef
 
+                    if new_coef == 0 and old_coef != 0:
+                        # A feature just died — hand control back to the outer
+                        # loop so CVs/anchor/thresholds get recomputed on the
+                        # smaller library before doing any more CD work.
+                        killed_feature = True
+                        break
+
                     with np.errstate(divide='ignore', invalid='ignore'):
                         change = abs(new_coef - old_coef)
                         if old_coef != 0:
                             change /= abs(old_coef)
                         if change > max_change:
                             max_change = change
+
+                if killed_feature:
+                    break
 
                 # Inner loop convergence check
                 if max_change <= self.tol:
@@ -334,9 +360,13 @@ class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
             active_mask = new_active_mask
             outer_iteration += 1
 
-            # Emergency break if everything died
+            # Emergency break if everything died. `weights` still references
+            # the prior (now-stale) mask, so drop it instead of caching.
             if not np.any(active_mask):
+                weights = None
                 break
+
+        self.cached_weights_ = weights
 
         # Map back to standard sklearn attributes
         self.coef_ = self.full_coef_[:-1]

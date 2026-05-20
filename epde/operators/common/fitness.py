@@ -13,7 +13,10 @@ import torch
 import matplotlib.pyplot as plt
 from matplotlib import cm
 
-from epde.integrate import SolverAdapter, DeepXDEAdapter
+from epde.integrate import SolverAdapter
+# DeepXDEAdapter is imported lazily inside DeepXDEBasedFitness.apply() to
+# avoid triggering deepxde's import-time backend banner when no DeepXDE
+# solver is used (e.g. legacy L2/L2LR fitness paths).
 from epde.structure.main_structures import SoEq, Equation
 from epde.operators.utils.template import CompoundOperator
 import epde.globals as global_var

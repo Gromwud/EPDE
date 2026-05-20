@@ -482,11 +482,11 @@ if __name__ == "__main__":
     directory = os.path.dirname(os.path.realpath(__file__))
     kdv_folder_name = os.path.join(directory)
 
-    # KdV_test(fit_operator, kdv_folder_name, 0)
+    KdV_test(fit_operator, kdv_folder_name, 0)
     # KdV_h_test(fit_operator, kdv_folder_name, 0)
     # KdV_sga_test(fit_operator, kdv_folder_name, 0)
 
     # kdv_discovery(kdv_folder_name, 0)
     # kdv_h_discovery(kdv_folder_name, 0)
     # kdv_sga_discovery(kdv_folder_name, 5)
-    kdv_sindy_discovery(kdv_folder_name, 0)
+    # kdv_sindy_discovery(kdv_folder_name, 0)

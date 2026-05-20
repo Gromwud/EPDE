@@ -110,9 +110,9 @@ def AC_test(operator: CompoundOperator, foldername: str, noise_level: int = 0):
     print('Shapes:', data.shape, grid[0].shape)
     dimensionality = 1
 
-    epde_search_obj = EpdeSearch(use_solver=False, use_pic=True, boundary=(5, 12),
+    epde_search_obj = EpdeSearch(use_solver=True, use_pic=True, boundary=(5, 12),
                                  coordinate_tensors=((grid[0], grid[1])), verbose_params={'show_iter_idx': True},
-                                 device='cpu')
+                                 device='cuda')
 
     epde_search_obj.set_preprocessor(default_preprocessor_type='FD',
                                      preprocessor_kwargs={})
@@ -176,10 +176,10 @@ if __name__ == "__main__":
     print(f"CUDA version linked with PyTorch: {torch.version.cuda}")
     # Operator = fitness.SolverBasedFitness # Replace by the developed PIC-based operator.
     # Operator = fitness.PIC
-    #Operator = fitness.L2LRFitness
+    # Operator = fitness.L2LRFitness
     Operator = fitness.DeepXDEBasedFitness
     params = EvolutionaryParams()
-    #operator_params = params.get_default_params_for_operator('DiscrepancyBasedFitnessWithCV') #{"penalty_coeff": 0.2, "pinn_loss_mult": 1e4}
+    # operator_params = params.get_default_params_for_operator('DiscrepancyBasedFitnessWithCV') #{"penalty_coeff": 0.2, "pinn_loss_mult": 1e4}
     try:
         operator_params = params.get_default_params_for_operator('DeepXDEBasedFitness')
     except Exception as e:
@@ -207,5 +207,5 @@ if __name__ == "__main__":
     directory = os.path.dirname(os.path.realpath(__file__))
     ac_folder_name = os.path.join(directory)
 
-    #AC_test(fit_operator, ac_folder_name, 0)
-    ac_discovery(ac_folder_name, 0)
+    AC_test(fit_operator, ac_folder_name, 0)
+    # ac_discovery(ac_folder_name, 0)

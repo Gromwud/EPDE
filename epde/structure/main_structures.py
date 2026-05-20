@@ -976,36 +976,27 @@ class Equation(ComplexStructure):
         """Frozenset of per-term factor-label sets, with the power parameter dropped.
 
         Skips terms whose internal weight is exactly zero (target term always
-        contributes). Memoized in ``_terms_labels_without_power_cache``; the
-        15 call sites of :meth:`_invalidate_label_cache` cover every
-        Equation-driven structure mutation. Term-level mutations from
-        external operators that bypass the Equation must invalidate the
-        cache themselves.
+        contributes). Per-term labels are delegated to
+        ``Term.factors_labels_without_power`` so structural identity rules
+        (e.g. trig freq bucketization via ``Factor.structural_label``) stay
+        consistent across every dedup site. Memoized in
+        ``_terms_labels_without_power_cache``; the 15 call sites of
+        :meth:`_invalidate_label_cache` cover every Equation-driven structure
+        mutation. Term-level mutations from external operators that bypass
+        the Equation must invalidate the cache themselves.
         """
         cached = getattr(self, '_terms_labels_without_power_cache', None)
         if cached is not None:
             return cached
         described = set()
         for term_idx, term in enumerate(self.structure):
-            cache_label = set()
-            if term_idx == self.target_idx:
-                for factor in term.structure:
-                    if len(factor.params) == 1:
-                        factor_label = (factor.cache_label[0])
-                    else:
-                        factor_label = (factor.cache_label[0], (factor.cache_label[1][-1]))
-                    cache_label.add(factor_label)
-            else:
+            if term_idx != self.target_idx:
                 weight_idx = term_idx if term_idx < self.target_idx else term_idx - 1
-                if not np.isclose(self.weights_internal[weight_idx], 0):
-                    for factor in term.structure:
-                        if len(factor.params) == 1:
-                            factor_label = (factor.cache_label[0])
-                        else:
-                            factor_label = (factor.cache_label[0], (factor.cache_label[1][-1]))
-                        cache_label.add(factor_label)
-            if len(cache_label) > 0:
-                described.add(frozenset(cache_label))
+                if np.isclose(self.weights_internal[weight_idx], 0):
+                    continue
+            term_labels = term.factors_labels_without_power
+            if len(term_labels) > 0:
+                described.add(term_labels)
         result = frozenset(described)
         self._terms_labels_without_power_cache = result
         return result
@@ -1014,25 +1005,17 @@ class Equation(ComplexStructure):
     def terms_labels(self) -> frozenset:
         """Frozenset of per-term factor-label sets identifying this equation's structure.
 
-        Each inner element is the ``Term.factors_labels`` of one term. Used as
-        a hashable structural fingerprint for membership tests against
+        Each inner element is the ``Term.factors_labels`` of one term -- so
+        per-term identity rules (e.g. trig freq bucketization via
+        ``Factor.structural_label``) are applied uniformly. Used as a
+        hashable structural fingerprint for membership tests against
         ``objective.history``. Memoized in ``_terms_labels_cache``; see
         ``terms_labels_without_power`` for invalidation contract.
         """
         cached = getattr(self, '_terms_labels_cache', None)
         if cached is not None:
             return cached
-        described = set()
-        for term_idx, term in enumerate(self.structure):
-            cache_label = set()
-            for factor in term.structure:
-                if factor.ftype == 'trigonometric':
-                    label = (factor.cache_label[0], tuple(factor.cache_label[1][i] for i, param in factor.params_description.items() if param['name'] != 'freq'))
-                    cache_label.add(label)
-                else:
-                    cache_label.add(factor.cache_label)
-            described.add(frozenset(cache_label))
-        result = frozenset(described)
+        result = frozenset(term.factors_labels for term in self.structure)
         self._terms_labels_cache = result
         return result
 

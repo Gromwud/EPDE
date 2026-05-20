@@ -125,69 +125,60 @@ class EqRightPartSelector(CompoundOperator):
         nonzero_terms.append(objective.structure[objective.target_idx])
         equation_terms = [term.factors_labels_without_power for term in nonzero_terms]
 
-        # If amount nonzero terms is more than one -- get their intersection
-        if len(equation_terms) > 1:
-            common_factors = list(frozenset.intersection(*equation_terms))
-            if len(common_factors) > 0:
-                for common_factor in common_factors:
-                    # Find if this intersection in the same dimension (i.e. trigonometry functions) + it's minimal order
-                    min_order = np.inf
-                    common_dim = []
-                    for term in nonzero_terms:
-                        for factor in term.structure:
-                            if len(factor.params) == 1:
-                                factor_label = (factor.cache_label[0])
+        if len(equation_terms) <= 1:
+            return False
+        common_factors = list(frozenset.intersection(*equation_terms))
+        if not common_factors:
+            return False
+
+        for common_factor in common_factors:
+            # Min power across the matching factor in every nonzero term.
+            min_order = np.inf
+            for term in nonzero_terms:
+                for factor in term.structure:
+                    if factor.structural_label_without_power == common_factor:
+                        if factor.cache_label[1][0] < min_order:
+                            min_order = factor.cache_label[1][0]
+
+            # Reduce order of common factor in every term; drop zero-power factors.
+            max_iter = 100
+            for term in nonzero_terms:
+                factors_simplified = []
+                for factor in term.structure:
+                    if factor.structural_label_without_power == common_factor:
+                        for i, value in enumerate(factor.params_description):
+                            if factor.params_description[i]["name"] == "power":
+                                factor.params[i] -= min_order
+                                if factor.params[i] == 0:
+                                    factors_simplified.append(factor)
                             else:
-                                factor_label = (factor.cache_label[0], (factor.cache_label[1][-1]))
-                            if factor_label == common_factor:
-                                if len(factor.params) > 1:
-                                    common_dim.append(factor.params[-1])
-                                if factor.cache_label[1][0] < min_order:
-                                    min_order = factor.cache_label[1][0]
-                    if len(set(common_dim)) < 2:
-                        # If dimension is the same -- reduce order of terms' factor
-                        max_iter = 100
-                        for term in nonzero_terms:
-                            factors_simplified = []
-                            for factor in term.structure:
-                                if len(factor.params) == 1:
-                                    factor_label = (factor.cache_label[0])
-                                else:
-                                    factor_label = (factor.cache_label[0], (factor.cache_label[1][-1]))
-                                if factor_label == common_factor:
-                                    for i, value in enumerate(factor.params_description):
-                                        if factor.params_description[i]["name"] == "power":
-                                            factor.params[i] -= min_order
-                                            if factor.params[i] == 0:
-                                                factors_simplified.append(factor)
-                                        else:
-                                            continue
-                            term.structure = [factor for factor in term.structure if factor not in factors_simplified]
-                            term.reset_saved_state()
+                                continue
+                term.structure = [factor for factor in term.structure if factor not in factors_simplified]
+                term.reset_saved_state()
 
-                            # If term's order became zero -- replace term.
-                            # Cap retries so a constrained token pool can't
-                            # deadlock the optimizer (same hazard fixed in
-                            # ``enforce_rps_uniqueness``).
-                            attempts = 0
-                            while attempts < max_iter:
-                                empty = len(term.structure) == 0
-                                not_meaningful = not term.contains_meaningful()
-                                signatures = {t.factors_labels for t in objective.structure}
-                                duplicate = len(signatures) != len(objective.structure)
-                                if not (empty or not_meaningful or duplicate):
-                                    break
-                                term.randomize()
-                                attempts += 1
+                # If term's order became zero -- replace term.
+                # Cap retries so a constrained token pool can't
+                # deadlock the optimizer (same hazard fixed in
+                # ``enforce_rps_uniqueness``).
+                attempts = 0
+                while attempts < max_iter:
+                    empty = len(term.structure) == 0
+                    not_meaningful = not term.contains_meaningful()
+                    signatures = {t.factors_labels for t in objective.structure}
+                    duplicate = len(signatures) != len(objective.structure)
+                    if not (empty or not_meaningful or duplicate):
+                        break
+                    term.randomize()
+                    attempts += 1
 
-                        # Structure changed: invalidate stale fitness /
-                        # weights / AIC caches while leaving RPS to the
-                        # caller's outer loop.
-                        try:
-                            objective.reset_state(reset_right_part=False)
-                        except TypeError:
-                            objective.reset_state()
-                        return True
+            # Structure changed: invalidate stale fitness /
+            # weights / AIC caches while leaving RPS to the
+            # caller's outer loop.
+            try:
+                objective.reset_state(reset_right_part=False)
+            except TypeError:
+                objective.reset_state()
+            return True
         return False
 
     def use_default_tags(self):

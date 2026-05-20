@@ -399,39 +399,25 @@ class Term(ComplexStructure):
 
     @property
     def factors_labels_without_power(self) -> frozenset:
-        """Return a frozenset of factor labels with the power parameter dropped.
+        """Return a frozenset of structural labels with the ``power`` param dropped.
 
-        Each entry is either the cache label tuple or its head plus the trailing
-        param (when the factor has more than one parameter). Used to compare
-        terms for structural identity ignoring power differences.
+        Identity is delegated to ``Factor.structural_label_without_power``,
+        which quantizes continuous-tolerance params (e.g. trig ``freq``)
+        into bucket indices so structural dedup stays consistent with
+        ``Factor.__eq__``.
         """
-        described = set()
-        for factor in self.structure:
-            if len(factor.params) == 1:
-                factor_label = (factor.cache_label[0])
-            else:
-                factor_label = (factor.cache_label[0], (factor.cache_label[1][-1]))
-            described.add(factor_label)
-        described = frozenset(described)
-        return described
+        return frozenset(factor.structural_label_without_power for factor in self.structure)
 
     @property
     def factors_labels(self) -> frozenset:
-        """Return a frozenset of canonical labels for each factor in the term.
+        """Return a frozenset of structural labels for each factor in the term.
 
-        Trigonometric factors collapse the ``freq`` parameter (kept fungible
-        across small frequency ranges); other factors use ``factor.cache_label``
-        directly. Used as a hashable identity for set/membership checks.
+        Identity is delegated to ``Factor.structural_label``, which
+        bucketises continuous-tolerance params (e.g. trig ``freq``) so
+        within-bucket differences don't fracture structural identity.
+        Used as a hashable identity for set/membership checks.
         """
-        described = set()
-        for factor in self.structure:
-            if factor.ftype == 'trigonometric':
-                label = (factor.cache_label[0], tuple(factor.cache_label[1][i] for i, param in factor.params_description.items() if param['name'] != 'freq'))
-                described.add(label)
-            else:
-                described.add(factor.cache_label)
-        described = frozenset(described)
-        return described
+        return frozenset(factor.structural_label for factor in self.structure)
 
     @property
     def term_label_without_power(self):

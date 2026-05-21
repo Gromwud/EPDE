@@ -478,9 +478,20 @@ class InitialParetoLevelSorting(CompoundOperator):
                     'InitialParetoLevelSorting.unique_candidate' + ('.FAIL' if hit_cap else ''),
                     attempts, uniqueness_attempt_limit,
                 )
-                if hit_cap and global_var.verbose.candidate_objectives:
-                    print(f"InitialParetoLevelSorting: could not generate unique candidate "
-                          f"after {uniqueness_attempt_limit} attempts; accepting duplicate.")
+                if hit_cap:
+                    # Initial population must be duplicate-free for MOEA/D's
+                    # per-sector uniqueness invariant. If the candidate pool
+                    # is too small to satisfy pop_size, fail loud rather than
+                    # silently corrupt the initial Pareto layer.
+                    raise RuntimeError(
+                        f"InitialParetoLevelSorting: could not generate a unique "
+                        f"initial candidate after {uniqueness_attempt_limit} attempts "
+                        f"(candidate index {idx}, {len(objective.history)} unique "
+                        f"systems already placed). The search space appears smaller "
+                        f"than the requested population. Reduce pop_size, widen the "
+                        f"token pool, or raise InitialParetoLevelSorting's "
+                        f"'uniqueness_attempt_limit' parameter."
+                    )
                 self.suboperators['chromosome_fitness'].apply(objective=candidate,
                                                               arguments=subop_args['chromosome_fitness'])
                 objective.history.add(system)

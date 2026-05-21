@@ -145,7 +145,9 @@ def simple_function_evaluator(factor, structural: bool = False, grids=None,
 
     else:
         if factor.params[power_param_idx] == 1:
-            value = global_var.tensor_cache.get(factor.cache_label, structural = structural, torch_mode = torch_mode)
+            # Same bucketed key Factor.evaluate uses so trig factors with
+            # within-tolerance freq share a single cached evaluation.
+            value = global_var.tensor_cache.get(factor.structural_label, structural = structural, torch_mode = torch_mode)
             return value
         else:
             value = global_var.tensor_cache.get(factor_params_to_str(factor, set_default_power = True,

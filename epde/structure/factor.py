@@ -221,15 +221,20 @@ class Factor(TerminalToken):
             raise Exception(
                 'Derivatives have to evaluated on the initial grid')
 
+        # Key the tensor cache on ``structural_label`` rather than
+        # ``cache_label``: continuous-tolerance params (e.g. trig
+        # ``freq`` with ``equality_ranges['freq'] > 0``) collapse into
+        # bucket indices, so two trig factors with freq=1.99999999 and
+        # freq=2.00000001 share one cache entry instead of evaluating
+        # separately. For factors with only exact-tolerance params
+        # (derivatives, grid, const, ...) the two labels are equal so
+        # behaviour is unchanged.
+        tcache_key = self.structural_label
         key = 'structural' if structural else 'base'
-        if (self.cache_label, structural) in global_var.tensor_cache and grids is None:
-            # print(f'Asking for {self.cache_label} in tmode {torch_mode}')
-            # print(f'From numpy cache of {global_var.tensor_cache.memory_structural["numpy"].keys()}')
-            # print(f'And torch cache of {global_var.tensor_cache.memory_structural["torch"].keys()}')
-
-            return global_var.tensor_cache.get(self.cache_label,
+        if (tcache_key, structural) in global_var.tensor_cache and grids is None:
+            return global_var.tensor_cache.get(tcache_key,
                                                structural=structural, torch_mode = torch_mode)
- 
+
         else:
             if self.is_deriv and self.evaluator._evaluator != simple_function_evaluator:
                 if grids is not None:
@@ -252,19 +257,19 @@ class Factor(TerminalToken):
                 if self.is_deriv and self.evaluator._evaluator == simple_function_evaluator:
                     full_deriv_code = (self._all_vars.index(self.variable), self.deriv_code)
                 else:
-                    full_deriv_code = None      
+                    full_deriv_code = None
 
                 if key == 'structural' and self.status['structural_and_defalut_merged']:
-                    self.saved[key] = global_var.tensor_cache.add(self.cache_label, value, structural=False, 
-                                                                  deriv_code=full_deriv_code)                    
+                    self.saved[key] = global_var.tensor_cache.add(tcache_key, value, structural=False,
+                                                                  deriv_code=full_deriv_code)
                     global_var.tensor_cache.use_structural(use_base_data=True,
-                                                           label=self.cache_label)
+                                                           label=tcache_key)
                 elif key == 'structural' and not self.status['structural_and_defalut_merged']:
                     global_var.tensor_cache.use_structural(use_base_data=False,
-                                                           label=self.cache_label,
+                                                           label=tcache_key,
                                                            replacing_data=value)
                 else:
-                    self.saved[key] = global_var.tensor_cache.add(self.cache_label, value, structural=False, 
+                    self.saved[key] = global_var.tensor_cache.add(tcache_key, value, structural=False,
                                                                   deriv_code=full_deriv_code)
             return value
 

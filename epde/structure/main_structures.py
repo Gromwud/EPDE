@@ -637,46 +637,67 @@ class Equation(ComplexStructure):
         max_outer = 200
         max_inner = 100
 
-        def _would_duplicate(idx, candidate):
+        # Prefer ADDING the new property-carrying term so existing structure
+        # is preserved; fall back to REPLACING a random term only when the
+        # ``terms_number`` cap is already reached.
+        terms_cap = int(self.metaparameters['terms_number']['value'])
+        can_add = len(self.structure) < terms_cap
+
+        def _slot_duplicate(idx, candidate):
+            """Duplicate check that ignores the slot we're about to write
+            to. ``idx=None`` => add path: check against ALL existing terms.
+            ``idx=k``       => replace path: skip slot k.
+            """
             sig = candidate.factors_labels
-            return any(j != idx and other.factors_labels == sig
+            return any((idx is None or j != idx) and other.factors_labels == sig
                        for j, other in enumerate(self.structure))
+
+        def _commit(idx, term):
+            if idx is None:
+                self.structure.append(term)
+            else:
+                self.structure[idx] = term
+            self._invalidate_label_cache()
 
         mf_marker = self.main_var_to_explain if mandatory_family else None
         max_factors = self.metaparameters['max_factors_in_term']['value']
+        outer_attempts = 0
         for _ in range(max_outer):
-            replacement_idx = np.random.randint(low=0, high=len(self.structure))
+            outer_attempts += 1
+            target_idx = None if can_add else np.random.randint(low=0, high=len(self.structure))
             temp = Term(self.pool, mandatory_family=mf_marker, max_factors_in_term=max_factors)
             if t_derivative:
                 inner = 0
                 while not temp.contains_t_derivative() and inner < max_inner:
                     temp = Term(self.pool, mandatory_family=mf_marker, max_factors_in_term=max_factors)
                     inner += 1
+                _loop_stats.record('restore_property.t_derivative_inner', inner, max_inner)
                 if not temp.contains_t_derivative():
                     continue
-                if _would_duplicate(replacement_idx, temp):
+                if _slot_duplicate(target_idx, temp):
                     continue
-                self.structure[replacement_idx] = temp
-                self._invalidate_label_cache()
+                _commit(target_idx, temp)
+                _loop_stats.record('restore_property.outer', outer_attempts, max_outer)
                 return
             if deriv and mandatory_family and temp.contains_deriv() and temp.contains_variable(self.main_var_to_explain):
-                if _would_duplicate(replacement_idx, temp):
+                if _slot_duplicate(target_idx, temp):
                     continue
-                self.structure[replacement_idx] = temp
-                self._invalidate_label_cache()
+                _commit(target_idx, temp)
+                _loop_stats.record('restore_property.outer', outer_attempts, max_outer)
                 return
             elif deriv and temp.contains_deriv(self.main_var_to_explain) and not mandatory_family:
-                if _would_duplicate(replacement_idx, temp):
+                if _slot_duplicate(target_idx, temp):
                     continue
-                self.structure[replacement_idx] = temp
-                self._invalidate_label_cache()
+                _commit(target_idx, temp)
+                _loop_stats.record('restore_property.outer', outer_attempts, max_outer)
                 return
             elif mandatory_family and temp.contains_variable(self.main_var_to_explain) and not deriv:
-                if _would_duplicate(replacement_idx, temp):
+                if _slot_duplicate(target_idx, temp):
                     continue
-                self.structure[replacement_idx] = temp
-                self._invalidate_label_cache()
+                _commit(target_idx, temp)
+                _loop_stats.record('restore_property.outer', outer_attempts, max_outer)
                 return
+        _loop_stats.record('restore_property.outer', outer_attempts, max_outer)
         warnings.warn(
             f'Equation.restore_property: could not satisfy '
             f'deriv={deriv}, mandatory_family={mandatory_family}, '

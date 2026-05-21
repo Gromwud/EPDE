@@ -23,6 +23,8 @@ from epde.operators.utils.template import CompoundOperator, add_base_param_to_op
 from epde.operators.multiobjective.moeadd_specific import get_basic_populator_updater
 from epde.operators.multiobjective.mutations import get_basic_mutation
 
+from epde import _loop_stats
+
 
 class ParetoLevelsCrossover(CompoundOperator):
     """
@@ -202,6 +204,26 @@ class EquationCrossover(CompoundOperator):
             if term.factors_labels not in eq2_signatures:
                 equation2.structure.append(term)
                 eq2_signatures.add(term.factors_labels)
+
+        # Post-assembly dedup gate. The pre-append checks above guard each
+        # injection from ``equation*_terms[1]``, but ``flatten(equation*_terms)``
+        # bypasses them: if ``detect_similar_terms`` ever buckets two
+        # structurally-equivalent terms (e.g. trig factors within
+        # ``equality_ranges``) into both the ``same`` and ``similar`` slots,
+        # the flattened structure carries a duplicate before any append runs.
+        # Crossover must not silently emit a duplicate offspring -- revert to
+        # the unchanged parents, matching the atomic-mutation semantics used
+        # by TermMutation on cap-hit.
+        eq1_sigs = [t.factors_labels for t in equation1.structure]
+        eq2_sigs = [t.factors_labels for t in equation2.structure]
+        had_duplicate = (len(set(eq1_sigs)) != len(eq1_sigs)
+                         or len(set(eq2_sigs)) != len(eq2_sigs))
+        _loop_stats.record(
+            'EquationCrossover.duplicate_offspring' + ('.FAIL' if had_duplicate else ''),
+            1, 1,
+        )
+        if had_duplicate:
+            return objective[0], objective[1]
 
         for i in range(len(equation1.structure)):
             if equation1.structure[i].factors_labels == equation1_target_term.factors_labels:

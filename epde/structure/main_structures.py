@@ -699,11 +699,25 @@ class Equation(ComplexStructure):
                 _loop_stats.record('restore_property.outer', outer_attempts, max_outer)
                 return
         _loop_stats.record('restore_property.outer', outer_attempts, max_outer)
-        warnings.warn(
-            f'Equation.restore_property: could not satisfy '
-            f'deriv={deriv}, mandatory_family={mandatory_family}, '
-            f't_derivative={t_derivative} without duplication after '
-            f'{max_outer} attempts; leaving structure unchanged.'
+        # Cap-hit is a configuration-failure signal, not a probabilistic
+        # search miss. In healthy configs the outer loop completes in
+        # single-digit attempts (observed mean 2.8-3.3, max 16 across
+        # every historical thesis run). Reaching ``max_outer`` means the
+        # token pool genuinely cannot produce a property-carrying term --
+        # e.g. ``max_derivative_order=0`` in every domain, the derivative
+        # family is missing from the pool, or ``mandatory_family`` wiring
+        # is wrong. Raise loudly so the user can fix the config, rather
+        # than silently returning a property-less equation.
+        raise RuntimeError(
+            f"Equation.restore_property: could not install requested "
+            f"property (deriv={deriv}, mandatory_family={mandatory_family}, "
+            f"t_derivative={t_derivative}) for main_var="
+            f"{self.main_var_to_explain!r} after {max_outer} sampling "
+            f"attempts. This is a configuration error -- verify that "
+            f"the token pool exposes a derivative family for this "
+            f"variable (max_derivative_order > 0 in at least one "
+            f"domain, derivative tokens enrolled, mandatory_family "
+            f"wiring correct)."
         )
 
     def reconstruct_by_right_part(self, right_part_idx):

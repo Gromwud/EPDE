@@ -65,8 +65,22 @@ def population_to_sectors(population, weights):
 def decomposition_based_worst(solutions: list, weights: np.ndarray, best_obj: np.ndarray,
                               penalty_factor: float = 1., obj_normalizer=None):
     '''
-    Algorithm 3 from the MOEA/DD paper (Li, Deb, Zhang, 2015).
-    Finds the worst solution among a given set using decomposition-based selection.
+    Decomposition-based worst-solution finder. Returns argmax PBI over the
+    most-crowded subregion within ``solutions``; ties on niche count are
+    broken by sum-PBI per paper Eq. (7).
+
+    Used as a helper for two branches of Algorithm 4 in the MOEA/DD paper
+    (Li, Deb, Zhang, Kwong, 2015):
+      * ``PopulationUpdater`` case ``l = 1`` -- called with the full
+        population; equivalent to ``LOCATE_WORST`` (Algorithm 5) since
+        every solution lives on the single front.
+      * ``PopulationUpdater`` case ``l > 1, |F_l| > 1, |Phi^h| > 1`` --
+        called with ONLY the last front ``F_l``. This is a deliberate
+        EPDE deviation from Algorithm 4 line 18, which says
+        ``argmax_{x in Phi^h} g^pbi(x|w^h, z*)`` over the FULL subregion
+        (potentially containing elite F_1..F_{l-1} solutions). Restricting
+        to F_l preserves convergence elites at the cost of some selection
+        pressure within Phi^h; see audit notes for the rationale.
     '''
     domain_solutions = population_to_sectors(solutions, weights)
     most_crowded_count = max(len(domain) for domain in domain_solutions)
@@ -169,18 +183,29 @@ class PopulationUpdater(CompoundOperator):
                     worst_solution = locate_pareto_worst(levels_obj, self_args['weights'],
                                                          self_args['best_obj'], self.params['PBI_penalty'])
             else:
-                # Algorithm 4, Case 3: multiple solutions on last front
+                # Algorithm 4, Case 3: multiple solutions on last front F_l.
+                # DEVIATION from the paper: the crowded-subregion search and
+                # the worst-PBI argmax are both restricted to F_l, NOT to
+                # the full Phi^h as Algorithm 4 line 18 specifies. The
+                # paper would let us eliminate an elite F_1 solution if it
+                # happened to have the largest PBI inside the crowded
+                # subregion; we prefer to keep the elite and only churn
+                # the last-front candidates. See ``decomposition_based_worst``
+                # docstring for the full rationale.
                 last_front = levels_obj.levels[-1]
                 last_front_by_domains = population_to_sectors(last_front, self_args['weights'])
                 most_crowded_count = max(len(d) for d in last_front_by_domains)
 
                 if most_crowded_count > 1:
-                    # Most crowded subregion has >1 solutions — remove worst PBI there
+                    # Most crowded F_l subregion has >1 solutions -- drop
+                    # the worst-PBI one among F_l members of that subregion.
                     worst_solution = decomposition_based_worst(last_front, self_args['weights'],
                                                                self_args['best_obj'], self.params['PBI_penalty'],
                                                                levels_obj.normalizer)
                 else:
-                    # All subregions have size 1 — find worst in whole population
+                    # Every F_l solution sits alone in its subregion: fall
+                    # back to NDL-aware LOCATE_WORST over the full P'
+                    # (Algorithm 5).
                     worst_solution = locate_pareto_worst(levels_obj, self_args['weights'],
                                                          self_args['best_obj'], self.params['PBI_penalty'])
 

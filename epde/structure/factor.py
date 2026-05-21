@@ -364,20 +364,30 @@ class Factor(TerminalToken):
 
         new_struct.__dict__.update(self.__dict__)
 
+        # Immutable / family-shared slots: set once at family construction
+        # or Factor init, never mutated per-factor afterward. Aliasing by
+        # reference avoids ~5-10 % of deepcopy work in the mutation hot
+        # path. ``_status`` IS mutated by Factor.status setter and so
+        # stays deep-copied.
+        attrs_to_share_by_ref = {
+            '_evaluator', 'equality_ranges', '_latex_constructor',
+            '_all_vars', 'deriv_code',
+        }
         attrs_to_avoid_copy = []
         for k in self.__slots__:
             try:
-                if k not in attrs_to_avoid_copy:
-                    if not isinstance(k, list):
-                        setattr(new_struct, k, copy.deepcopy(
-                            getattr(self, k), memo))
-                    else:
-                        temp = []
-                        for elem in getattr(self, k):
-                            temp.append(copy.deepcopy(elem, memo))
-                        setattr(new_struct, k, temp)
-                else:
+                if k in attrs_to_avoid_copy:
                     setattr(new_struct, k, None)
+                elif k in attrs_to_share_by_ref:
+                    setattr(new_struct, k, getattr(self, k))
+                elif not isinstance(k, list):
+                    setattr(new_struct, k, copy.deepcopy(
+                        getattr(self, k), memo))
+                else:
+                    temp = []
+                    for elem in getattr(self, k):
+                        temp.append(copy.deepcopy(elem, memo))
+                    setattr(new_struct, k, temp)
             except AttributeError:
                 pass
 

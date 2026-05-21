@@ -45,13 +45,17 @@ _DEFAULT_EQUATION_METAPARAMETERS = {
 }
 
 
-def _deepcopy_slots(src, memo, attrs_to_avoid_copy=()):
+def _deepcopy_slots(src, memo, attrs_to_avoid_copy=(), attrs_to_share_by_ref=()):
     """Slot-aware deep copy used by Term/Equation/SoEq.
 
     Replicates the loop that previously lived in each class's __deepcopy__:
     iterate __slots__, skip attrs in attrs_to_avoid_copy (sets them to None
     instead), tolerate slots that are not yet set (AttributeError -> skip),
     deepcopy lists element-by-element so subclassed list types survive.
+
+    ``attrs_to_share_by_ref`` aliases the named slots from src directly
+    instead of deep-copying them -- used for immutable / single-instance
+    objects (e.g. ``pool``) that the same population shares.
 
     A free function (not a mixin) because __slots__ classes cannot gain a new
     attribute via mixin without redeclaring slots; a helper sidesteps that.
@@ -63,6 +67,8 @@ def _deepcopy_slots(src, memo, attrs_to_avoid_copy=()):
         try:
             if k in attrs_to_avoid_copy:
                 setattr(new_struct, k, None)
+            elif k in attrs_to_share_by_ref:
+                setattr(new_struct, k, getattr(src, k))
             else:
                 value = getattr(src, k)
                 if isinstance(value, list):
@@ -396,7 +402,10 @@ class Term(ComplexStructure):
 
     @HistoryExtender('\n -> was copied by deepcopy(self)', 'n')
     def __deepcopy__(self, memo=None):
-        return _deepcopy_slots(self, memo)
+        # ``pool`` is the population-wide TFPool, set once and never
+        # mutated; sharing by ref skips a recursive copy of every token
+        # family in every Term clone.
+        return _deepcopy_slots(self, memo, attrs_to_share_by_ref=('pool',))
 
     @property
     def factors_labels_without_power(self) -> frozenset:
@@ -817,7 +826,27 @@ class Equation(ComplexStructure):
 
     @HistoryExtender('\n -> was copied by deepcopy(self)', 'n')
     def __deepcopy__(self, memo=None):
-        return _deepcopy_slots(self, memo)
+        # Volatile slot caches are about to be invalidated by the next
+        # mutation anyway -- skip the deep-copy. ``pool`` is the
+        # population-wide TFPool (single instance, never mutated) --
+        # share by reference. ``metaparameters`` IS mutated via
+        # ``encoding.Gene.__setitem__``
+        # (see test_main_structures_characterization::test_metaparameters_*)
+        # and MUST stay deep-copied.
+        new_struct = _deepcopy_slots(
+            self, memo,
+            attrs_to_avoid_copy=(
+                '_cached_sw_weights',
+                '_terms_labels_cache', '_terms_labels_without_power_cache',
+            ),
+            attrs_to_share_by_ref=('pool',),
+        )
+        # ``_eval_cache`` must round-trip as a *fresh empty dict* (separate
+        # ref, equal == content); the cache content itself can be heavy
+        # (cached evaluated tensors) and is the cheapest thing to discard
+        # since the next ``evaluate()`` repopulates lazily.
+        new_struct._eval_cache = {}
+        return new_struct
 
     def copy_properties_to(self, new_equation):
         new_equation.weights_internal_evald = self.weights_internal_evald

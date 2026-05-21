@@ -40,11 +40,29 @@ class EqRightPartSelector(CompoundOperator):
         Inplace detection of index of the best separation into right part, saved into ``equation.target_idx``
 
     
-    '''    
+    '''
     key = 'FitnessCheckingRightPartSelector'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Negative cache: structure hashes that produced ``inf`` fitness on
+        # every eligible target_idx. Scope is one operator-tree lifetime,
+        # which matches one ``EpdeSearch.fit()`` call -- the strategy
+        # builder in ``epde/optimizers/moeadd/strategy.py`` constructs a
+        # fresh ``EqRightPartSelector()`` per build. Repeat encounters
+        # skip the term-sweep via internal ``objective.randomize()``.
+        self._bad_structures: set = set()
 
     @HistoryExtender('\n -> The equation structure was detected: ', 'a')
     def apply(self, objective : Equation, arguments : dict):
+        """Select a right-part term for ``objective`` in-place.
+
+        Handles two recoverable failure modes inside the outer loop via
+        ``objective.randomize()`` (cheap, single-equation reroll) rather
+        than bubbling up to the chromosome-level offspring loop -- the
+        chromosome regen path is ~100x more expensive than a single
+        equation reroll and floods the EA when many candidates fail.
+        """
         self_args, subop_args = self.parse_suboperator_args(arguments = arguments)
 
         # Duplicate-term detection: a frozenset of per-term factor signatures
@@ -72,6 +90,11 @@ class EqRightPartSelector(CompoundOperator):
             weights_internal = np.zeros(len(objective.structure) - 1)
             min_idx = 0
             inner_attempts = 0
+            # ``restore_property(deriv=True)`` injects a derivative-family
+            # token into the structure; it's a refinement op, not a regen
+            # signal. The randomize() fallback below would only fire if the
+            # 200-iter restore_property loop failed 100 times in a row -- a
+            # ~20 000-attempt impossibility in practice.
             while not any(term.contains_deriv(objective.main_var_to_explain) for term in objective.structure):
                 inner_attempts += 1
                 if inner_attempts > inner_max_iter:
@@ -84,6 +107,14 @@ class EqRightPartSelector(CompoundOperator):
                     break
                 objective.restore_property(mandatory_family=False, deriv=True)
             _loop_stats.record('EqRPS.inner_derivative', inner_attempts, inner_max_iter)
+
+            # Negative cache: this structure already zeroed out for every
+            # target_idx on a prior call (sparsity is deterministic on
+            # the same input). Skip the term-sweep, reroll, retry.
+            if objective.terms_labels in self._bad_structures:
+                _loop_stats.record('EqRPS.bad_structure_skip', 1, 1)
+                objective.randomize()
+                continue
 
             for target_idx, target_term in enumerate(objective.structure):
                 if not objective.structure[target_idx].contains_deriv(objective.main_var_to_explain):
@@ -101,6 +132,13 @@ class EqRightPartSelector(CompoundOperator):
                 objective.weights_final_evald = False
 
             if np.isinf(min_fitness):
+                # Every eligible target produced inf fitness for the
+                # post-restore structure -- reroll this single equation
+                # locally (cheap) and continue the outer loop. The
+                # negative cache below remembers the structure shape so
+                # future outer iters / future calls skip the term-sweep.
+                _loop_stats.record('EqRPS.inf_fitness_regen', 1, 1)
+                self._bad_structures.add(objective.terms_labels)
                 objective.randomize()
                 continue
 
@@ -334,6 +372,12 @@ class SoEqRightPartSelector(CompoundOperator):
     key = 'SoEqRightPartSelector'
 
     def apply(self, objective, arguments: dict):
+        """Run per-equation RPS forward + bidirectional passes in-place.
+
+        Failures inside ``EqRightPartSelector.apply`` are handled locally
+        via per-equation ``objective.randomize()`` -- this method has no
+        regen signal to forward.
+        """
         self_args, subop_args = self.parse_suboperator_args(arguments=arguments)
         eq_selector = self.suboperators['eq_right_part_selector']
         eq_args = subop_args.get('eq_right_part_selector', arguments)

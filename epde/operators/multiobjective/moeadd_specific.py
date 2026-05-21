@@ -453,6 +453,7 @@ class InitialParetoLevelSorting(CompoundOperator):
         self_args, subop_args = self.parse_suboperator_args(arguments = arguments)
 
         if len(objective.population) == 0:
+            uniqueness_attempt_limit = self.params['uniqueness_attempt_limit']
             for idx, candidate in enumerate(objective.unplaced_candidates):
                 candidate.reset_state(True)
                 # SoEqRightPartSelector handles cross-equation RPS
@@ -461,12 +462,25 @@ class InitialParetoLevelSorting(CompoundOperator):
                                                                 arguments = subop_args['right_part_selector'])
 
                 system = candidate.equations_labels
+                attempts = 0
+                hit_cap = False
                 while system in objective.history:
+                    if attempts >= uniqueness_attempt_limit:
+                        hit_cap = True
+                        break
+                    attempts += 1
                     candidate.create()
                     candidate.reset_state(True)
                     self.suboperators['right_part_selector'].apply(objective=candidate,
                                                                    arguments=subop_args['right_part_selector'])
                     system = candidate.equations_labels
+                _loop_stats.record(
+                    'InitialParetoLevelSorting.unique_candidate' + ('.FAIL' if hit_cap else ''),
+                    attempts, uniqueness_attempt_limit,
+                )
+                if hit_cap and global_var.verbose.candidate_objectives:
+                    print(f"InitialParetoLevelSorting: could not generate unique candidate "
+                          f"after {uniqueness_attempt_limit} attempts; accepting duplicate.")
                 self.suboperators['chromosome_fitness'].apply(objective=candidate,
                                                               arguments=subop_args['chromosome_fitness'])
                 objective.history.add(system)

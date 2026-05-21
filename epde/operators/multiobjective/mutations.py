@@ -139,19 +139,30 @@ class TermMutation(CompoundOperator):
         # the equation OR no actual change vs the previous term. Cap the
         # retries so a tight token pool can't deadlock the optimizer (same
         # hazard fixed in ``enforce_rps_uniqueness`` / ``simplify_equation``).
+        # On cap-hit, revert to the pre-mutation term: silently committing a
+        # duplicate or no-op violates the structure-dedup rule and lets
+        # population diversity drift unobservably.
         max_iter = 100
         attempts = 0
+        hit_cap = True
         for _ in range(max_iter):
             attempts += 1
             signatures = {t.factors_labels for t in equation.structure}
             duplicate = len(signatures) != len(equation.structure)
             unchanged = equation.structure[term_idx].factors_labels == temp.factors_labels
             if not (duplicate or unchanged):
+                hit_cap = False
                 break
             equation.structure[term_idx].randomize()
             equation.structure[term_idx].reset_saved_state()
             equation._invalidate_label_cache()
-        _loop_stats.record('TermMutation.unique_term', attempts, max_iter)
+        if hit_cap:
+            equation.structure[term_idx] = temp
+            equation._invalidate_label_cache()
+        _loop_stats.record(
+            'TermMutation.unique_term' + ('.FAIL' if hit_cap else ''),
+            attempts, max_iter,
+        )
         return equation.structure[term_idx]
 
     def use_default_tags(self):

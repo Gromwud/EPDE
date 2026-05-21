@@ -17,6 +17,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 # import seaborn as sns
 import matplotlib.pyplot as plt
 from epde.supplementary import calculate_weights, GramSetup
+from epde import _loop_stats
 
 
 # class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
@@ -263,11 +264,13 @@ class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
 
         outer_iteration = 0
         max_outer_iters = total_features  # Max possible eliminations
+        outer_iters_executed = 0
 
         # =================================================================
         # OUTER LOOP: Library Stabilization & RFE (Recursive Feature Elimination)
         # =================================================================
         while outer_iteration < max_outer_iters:
+            outer_iters_executed += 1
 
             # 1. Isolate the currently "stabilized" library
             surviving_features_mask = active_mask[:-1]
@@ -302,8 +305,10 @@ class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
             # INNER LOOP: Pure Coordinate Descent on the Stabilized Library
             # =================================================================
             cd_iteration = 0
+            cd_iters_executed = 0
             killed_feature = False
             while cd_iteration < self.max_iter:
+                cd_iters_executed += 1
                 max_change = 0.0
 
                 for j in cv_order:
@@ -344,6 +349,7 @@ class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
                     break
 
                 cd_iteration += 1
+            _loop_stats.record('PhysicsInformedLasso.CD_inner', cd_iters_executed, self.max_iter)
 
             # =================================================================
             # THE BRIDGE: Check for Eliminations
@@ -369,6 +375,7 @@ class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
                 weights = None
                 break
 
+        _loop_stats.record('PhysicsInformedLasso.RFE_outer', outer_iters_executed, max_outer_iters)
         self.cached_weights_ = weights
 
         # Map back to standard sklearn attributes

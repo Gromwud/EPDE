@@ -18,6 +18,8 @@ from epde.structure.structure_template import check_uniqueness
 from epde.supplementary import filter_powers
 from epde.operators.utils.template import CompoundOperator, add_base_param_to_operator
 
+from epde import _loop_stats
+
 
 from epde.decorators import HistoryExtender, ResetEquationStatus
 
@@ -67,12 +69,15 @@ class EquationMutation(CompoundOperator):
         #                                                                     arguments=subop_args['mutation'])
         # objective.structure[term_idx].reset_saved_state()
         equation = deepcopy(objective)
+        attempts = 0
         for _ in range(10):
+            attempts += 1
             if not equation.add_random_term():
                 # Either ``terms_number`` reached or the pool ran out of
                 # uniques. Either way, further attempts would no-op or
                 # risk introducing a duplicate downstream -- stop here.
                 break
+        _loop_stats.record('EquationMutation.add_terms', attempts, 10)
 
         assert len(equation.terms_labels) == len(equation.structure)
 
@@ -135,7 +140,9 @@ class TermMutation(CompoundOperator):
         # retries so a tight token pool can't deadlock the optimizer (same
         # hazard fixed in ``enforce_rps_uniqueness`` / ``simplify_equation``).
         max_iter = 100
+        attempts = 0
         for _ in range(max_iter):
+            attempts += 1
             signatures = {t.factors_labels for t in equation.structure}
             duplicate = len(signatures) != len(equation.structure)
             unchanged = equation.structure[term_idx].factors_labels == temp.factors_labels
@@ -144,6 +151,7 @@ class TermMutation(CompoundOperator):
             equation.structure[term_idx].randomize()
             equation.structure[term_idx].reset_saved_state()
             equation._invalidate_label_cache()
+        _loop_stats.record('TermMutation.unique_term', attempts, max_iter)
         return equation.structure[term_idx]
 
     def use_default_tags(self):
@@ -184,7 +192,9 @@ class TermParameterMutation(CompoundOperator):
         # Cap the retry loop so a constrained token pool can't deadlock
         # the optimizer (same hazard fixed in ``enforce_rps_uniqueness``).
         max_iter = 100
+        attempts = 0
         for _ in range(max_iter):
+            attempts += 1
             term = equation.structure[term_idx]
             for factor in term.structure:
                 if term_idx == equation.target_idx:
@@ -212,6 +222,7 @@ class TermParameterMutation(CompoundOperator):
             signatures = {t.factors_labels for t in equation.structure}
             if len(signatures) == len(equation.structure):
                 break
+        _loop_stats.record('TermParameterMutation.unique', attempts, max_iter)
         term.reset_saved_state()
         return term
     

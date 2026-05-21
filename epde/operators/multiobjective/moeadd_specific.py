@@ -19,6 +19,8 @@ from epde.operators.multiobjective.mutations import get_basic_mutation
 from epde.structure.main_structures import SoEq
 from copy import deepcopy
 
+from epde import _loop_stats
+
 
 def penalty_based_intersection(sol_obj, weight, ideal_obj,
                                penalty_factor=1., obj_normalizer=None) -> float:
@@ -367,7 +369,10 @@ class OffspringUpdater(CompoundOperator):
             #         self.suboperators['right_part_selector'].apply(objective=temp_offspring,
             #                                                        arguments=subop_args['right_part_selector'])
             #         term_replaced = is_rps_in_other_equation(temp_offspring)
+            total_attempts = 0
+            hit_offspring_cap = False
             while True:
+                total_attempts += 1
                 temp_offspring = self.suboperators['chromosome_mutation'].apply(objective=temp_offspring,
                                                                                 arguments=subop_args['chromosome_mutation'])
                 temp_offspring.reset_state(True)
@@ -388,6 +393,7 @@ class OffspringUpdater(CompoundOperator):
                         print(temp_offspring.obj_fun)
                     break
                 if replaced == offspring_attempt_limit:
+                    hit_offspring_cap = True
                     if global_var.verbose.candidate_objectives:
                         print("Could not generate unique offspring")
                     break
@@ -398,6 +404,12 @@ class OffspringUpdater(CompoundOperator):
                     # print("Could not generate unique offspring")
                     # break
                 attempt += 1
+            # Track total iters and cap-hits separately for the success vs failure paths.
+            theoretical_cap = (offspring_attempt_limit + 1) * (mutation_attempt_limit + 1)
+            _loop_stats.record(
+                'OffspringUpdater.unique_offspring' + ('.FAIL' if hit_offspring_cap else ''),
+                total_attempts, theoretical_cap,
+            )
         return objective
     
 def get_pareto_levels_updater(right_part_selector : CompoundOperator, chromosome_fitness : CompoundOperator,

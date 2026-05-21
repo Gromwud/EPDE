@@ -15,6 +15,7 @@ import epde.globals as global_var
 from epde.operators.utils.template import CompoundOperator
 from epde.decorators import HistoryExtender
 from epde.structure.main_structures import Term, Equation
+from epde import _loop_stats
     
 class EqRightPartSelector(CompoundOperator):
     '''
@@ -82,6 +83,7 @@ class EqRightPartSelector(CompoundOperator):
                     objective.randomize()
                     break
                 objective.restore_property(mandatory_family=False, deriv=True)
+            _loop_stats.record('EqRPS.inner_derivative', inner_attempts, inner_max_iter)
 
             for target_idx, target_term in enumerate(objective.structure):
                 if not objective.structure[target_idx].contains_deriv(objective.main_var_to_explain):
@@ -114,6 +116,7 @@ class EqRightPartSelector(CompoundOperator):
             if objective.structure[objective.target_idx].contains_deriv(objective.main_var_to_explain):
                 objective.is_correct_right_part = True
 
+        _loop_stats.record('EqRPS.outer', outer_attempts, outer_max_iter)
         objective.right_part_selected = True
         objective.remove_zero_terms()
 
@@ -170,6 +173,7 @@ class EqRightPartSelector(CompoundOperator):
                         break
                     term.randomize()
                     attempts += 1
+                _loop_stats.record('simplify_equation.replace_term', attempts, max_iter)
 
             # Structure changed: invalidate stale fitness /
             # weights / AIC caches while leaving RPS to the
@@ -228,7 +232,9 @@ class RandomRHPSelector(CompoundOperator):
                 # feedback-structure-dedup memory).
                 max_iter = 100
                 candidate_term = None
+                attempts = 0
                 for _ in range(max_iter):
+                    attempts += 1
                     candidate_term = Term(pool = prev_term.pool, mandatory_family = objective.main_var_to_explain,
                                           max_factors_in_term = len(prev_term.structure),
                                           create_derivs = True)
@@ -245,6 +251,7 @@ class RandomRHPSelector(CompoundOperator):
                         f'for {objective.main_var_to_explain!r} after {max_iter} '
                         f'attempts; keeping last candidate (may duplicate).'
                     )
+                _loop_stats.record('RandomRHPSelector.candidate_gen', attempts, max_iter)
 
                 objective.structure[idx] = candidate_term
             else:
@@ -283,13 +290,16 @@ def _scrub_conflicting_terms(equation: Equation, fixed_rps, *, max_iter: int = 1
             continue
         if not _conflicts(term):
             continue
+        attempts = 0
         for _ in range(max_iter):
+            attempts += 1
             term.randomize()
             term.reset_saved_state()
             signatures = {t.factors_labels for t in equation.structure}
             duplicate = len(signatures) != len(equation.structure)
             if not _conflicts(term) and not duplicate:
                 break
+        _loop_stats.record('scrub_conflicting_terms', attempts, max_iter)
         changed = True
 
     if changed:
@@ -349,7 +359,9 @@ class SoEqRightPartSelector(CompoundOperator):
         # re-select when scrubbing changes the structure. Iterates until
         # a full pass yields no changes.
         max_passes = 5
+        passes_used = 0
         for _ in range(max_passes):
+            passes_used += 1
             any_changes = False
             for eq_idx, equation in enumerate(equations):
                 other_rps = [rs for i, rs in enumerate(rps_signatures)
@@ -376,6 +388,7 @@ class SoEqRightPartSelector(CompoundOperator):
                 any_changes = True
             if not any_changes:
                 break
+        _loop_stats.record('SoEqRPS.bidirectional', passes_used, max_passes)
 
     def use_default_tags(self):
         self._tags = {'right part selection', 'chromosome level',

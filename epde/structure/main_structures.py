@@ -26,6 +26,7 @@ import torch
 import epde.globals as global_var
 import epde.optimizers.moeadd.solution_template as moeadd
 
+from epde import _loop_stats
 from epde.decorators import HistoryExtender, BoundaryExclusion
 from epde.evaluators import simple_function_evaluator
 from epde.interface.token_family import TFPool
@@ -505,12 +506,16 @@ class Equation(ComplexStructure):
         for i in range(len(basic_structure), int(self.metaparameters['terms_number']['value'])):
             new_term = Term(self.pool, max_factors_in_term=self.metaparameters['max_factors_in_term']['value'],
                             mandatory_family=None, passed_term=None)
+            uniq_attempts = 0
             for _ in range(max_iter):
+                uniq_attempts += 1
                 if new_term.factors_labels not in self.terms_labels:
+                    _loop_stats.record('Equation.__init__.unique_term', uniq_attempts, max_iter)
                     break
                 new_term.randomize()
                 new_term.reset_saved_state()
             else:
+                _loop_stats.record('Equation.__init__.unique_term', uniq_attempts, max_iter)
                 # Pool can't yield a unique term against the current
                 # structure -- stop, don't try further slots. Subsequent
                 # ``new_term`` draws would face the same exhausted pool,
@@ -862,12 +867,16 @@ class Equation(ComplexStructure):
         max_iter = 10
         new_term = Term(self.pool, max_factors_in_term=self.metaparameters['max_factors_in_term']['value'],
                         mandatory_family=None, passed_term=None)
+        attempts = 0
         for _ in range(max_iter):
+            attempts += 1
             if new_term.factors_labels not in self.terms_labels:
                 self.structure.append(deepcopy(new_term))
                 self._invalidate_label_cache()
+                _loop_stats.record('add_random_term', attempts, max_iter)
                 return True
             new_term.randomize()
+        _loop_stats.record('add_random_term', attempts, max_iter)
         return False
 
     @property

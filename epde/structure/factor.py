@@ -18,6 +18,7 @@ except ImportError:
 import epde.globals as global_var
 from epde.structure.Tokens import TerminalToken
 from epde.supplementary import factor_params_to_str, train_ann, use_ann_to_predict, exp_form
+from epde.structure.structure_template import _deepcopy_slots
 from epde.evaluators import simple_function_evaluator
 
 class EvaluatorContained(object):
@@ -59,11 +60,20 @@ class EvaluatorContained(object):
 class Factor(TerminalToken):
     __slots__ = ['_params', '_params_description', '_hash_val', '_latex_constructor', 'label',
                  'ftype', '_variable', '_all_vars', 'grid_set', 'grid_idx', 'is_deriv', 'deriv_code',
-                 'cache_linked', '_status', 'equality_ranges', '_evaluator', 'saved']
+                 'cache_linked', '_status', 'equality_ranges', '_evaluator', 'saved',
+                 '_cache_label', '_structural_label', '_structural_label_without_power']
 
     def __init__(self, token_name: str, status: dict, family_type: str, latex_constructor: Callable,
-                 variable: str = None, all_vars: list = None, randomize: bool = False, 
+                 variable: str = None, all_vars: list = None, randomize: bool = False,
                  params_description=None, deriv_code=None, equality_ranges = None):
+        # Label memoization slots: initialize BEFORE anything that
+        # could trigger ``params.setter`` (e.g. ``set_parameters`` ->
+        # ``TerminalToken.__init__`` -> ``self.params = ...``). The
+        # overridden setter calls ``_invalidate_label_cache``, which
+        # touches these slots.
+        self._cache_label = None
+        self._structural_label = None
+        self._structural_label_without_power = None
         self.label = token_name
         self.ftype = family_type
         self._variable = variable
@@ -273,10 +283,45 @@ class Factor(TerminalToken):
                                                                   deriv_code=full_deriv_code)
             return value
 
+    def _invalidate_label_cache(self):
+        """Drop memoized ``cache_label`` / ``structural_label`` /
+        ``structural_label_without_power``.
+
+        Called automatically by the overridden ``params`` setter and
+        ``set_param``. External code that mutates ``self.params`` via
+        numpy in-place assignment (``factor.params[i] = X``) bypasses
+        the setter and MUST call this method directly -- otherwise the
+        memoized label remains stale and dedup / cache-key checks
+        return wrong answers. See [[feedback_label_format_coupling]]
+        and sleepy-swinging-acorn audit R1+A6.
+        """
+        self._cache_label = None
+        self._structural_label = None
+        self._structural_label_without_power = None
+
+    @TerminalToken.params.setter
+    def params(self, params):
+        # Reuse the base validation + storage + _fix_val reset, then
+        # drop the memoized labels. Routing through the setter is the
+        # canonical mutation path for whole-array reassignment; in-place
+        # numpy index assignment bypasses this and must invalidate
+        # explicitly (see ``_invalidate_label_cache`` docstring).
+        TerminalToken.params.fset(self, params)
+        self._invalidate_label_cache()
+
+    def set_param(self, param, name=None, idx=None):
+        # Single-parameter mutation path. ``TerminalToken.set_param``
+        # writes to ``self._params[idx]`` in place and clears
+        # ``_fix_val``; the label cache must also drop because the
+        # quantization buckets / cache key depend on the param value.
+        super().set_param(param, name=name, idx=idx)
+        self._invalidate_label_cache()
+
     @property
     def cache_label(self):
-        cache_label = factor_params_to_str(self)
-        return cache_label
+        if self._cache_label is None:
+            self._cache_label = factor_params_to_str(self)
+        return self._cache_label
 
     def _quantized_params(self, drop_power: bool = False) -> tuple:
         """Return params with continuous-tolerance ones quantized into bucket
@@ -309,7 +354,10 @@ class Factor(TerminalToken):
         indices so set-based dedup and ``Factor.__eq__``'s tolerance
         comparison agree.
         """
-        return (self.cache_label[0], self._quantized_params(drop_power=False))
+        if self._structural_label is None:
+            self._structural_label = (self.cache_label[0],
+                                      self._quantized_params(drop_power=False))
+        return self._structural_label
 
     @property
     def structural_label_without_power(self):
@@ -318,7 +366,12 @@ class Factor(TerminalToken):
         Used by ``simplify_equation`` to find shared factors across
         terms regardless of their individual powers.
         """
-        return (self.cache_label[0], self._quantized_params(drop_power=True))
+        if self._structural_label_without_power is None:
+            self._structural_label_without_power = (
+                self.cache_label[0],
+                self._quantized_params(drop_power=True),
+            )
+        return self._structural_label_without_power
 
     @property
     def name(self):
@@ -363,39 +416,26 @@ class Factor(TerminalToken):
         self.grid_set = True
 
     def __deepcopy__(self, memo=None):
-        clss = self.__class__
-        new_struct = clss.__new__(clss)
-        memo[id(self)] = new_struct
-
+        # ``_evaluator``, ``equality_ranges``, ``_latex_constructor``,
+        # ``_all_vars`` and ``deriv_code`` are family-owned objects set
+        # once at family construction and never mutated per-factor;
+        # share by reference saves ~5-10 % of deepcopy work in the
+        # mutation hot path. ``_status`` IS mutated by ``Factor.status``
+        # setter and stays deep-copied.
+        new_struct = _deepcopy_slots(
+            self, memo,
+            attrs_to_share_by_ref=(
+                '_evaluator', 'equality_ranges', '_latex_constructor',
+                '_all_vars', 'deriv_code',
+            ),
+        )
+        # ``Token`` / ``TerminalToken`` parents don't declare ``__slots__``,
+        # so a Factor instance also carries a ``__dict__`` populated by
+        # ``TerminalToken.__init__`` (val, cache_val, _fix_val, etc.).
+        # Shallow update mirrors the original contract -- ``val`` is
+        # reassigned on every ``Factor.value()`` call rather than mutated
+        # in place, so aliasing the reference is safe.
         new_struct.__dict__.update(self.__dict__)
-
-        # Immutable / family-shared slots: set once at family construction
-        # or Factor init, never mutated per-factor afterward. Aliasing by
-        # reference avoids ~5-10 % of deepcopy work in the mutation hot
-        # path. ``_status`` IS mutated by Factor.status setter and so
-        # stays deep-copied.
-        attrs_to_share_by_ref = {
-            '_evaluator', 'equality_ranges', '_latex_constructor',
-            '_all_vars', 'deriv_code',
-        }
-        attrs_to_avoid_copy = []
-        for k in self.__slots__:
-            try:
-                if k in attrs_to_avoid_copy:
-                    setattr(new_struct, k, None)
-                elif k in attrs_to_share_by_ref:
-                    setattr(new_struct, k, getattr(self, k))
-                elif not isinstance(k, list):
-                    setattr(new_struct, k, copy.deepcopy(
-                        getattr(self, k), memo))
-                else:
-                    temp = []
-                    for elem in getattr(self, k):
-                        temp.append(copy.deepcopy(elem, memo))
-                    setattr(new_struct, k, temp)
-            except AttributeError:
-                pass
-
         return new_struct
 
     def use_cache(self):

@@ -34,8 +34,8 @@ from epde.preprocessing.domain_pruning import DomainPruner
 
 from epde.structure.encoding import Chromosome
 from epde.structure.factor import Factor
-from epde.structure.structure_template import ComplexStructure, check_uniqueness
-from epde.supplementary import filter_powers, normalize_ts, population_sort, flatten, rts, exp_form, minmax_normalize
+from epde.structure.structure_template import ComplexStructure, check_uniqueness, _deepcopy_slots
+from epde.supplementary import filter_powers, normalize_ts, population_sort, flatten, rts, exp_form, minmax_normalize, retry_until_unique
 
 
 _DEFAULT_EQUATION_METAPARAMETERS = {
@@ -43,41 +43,6 @@ _DEFAULT_EQUATION_METAPARAMETERS = {
     'terms_number':        {'optimizable': False, 'value': 5.},
     'max_factors_in_term': {'optimizable': False, 'value': 1.},
 }
-
-
-def _deepcopy_slots(src, memo, attrs_to_avoid_copy=(), attrs_to_share_by_ref=()):
-    """Slot-aware deep copy used by Term/Equation/SoEq.
-
-    Replicates the loop that previously lived in each class's __deepcopy__:
-    iterate __slots__, skip attrs in attrs_to_avoid_copy (sets them to None
-    instead), tolerate slots that are not yet set (AttributeError -> skip),
-    deepcopy lists element-by-element so subclassed list types survive.
-
-    ``attrs_to_share_by_ref`` aliases the named slots from src directly
-    instead of deep-copying them -- used for immutable / single-instance
-    objects (e.g. ``pool``) that the same population shares.
-
-    A free function (not a mixin) because __slots__ classes cannot gain a new
-    attribute via mixin without redeclaring slots; a helper sidesteps that.
-    """
-    clss = src.__class__
-    new_struct = clss.__new__(clss)
-    memo[id(src)] = new_struct
-    for k in src.__slots__:
-        try:
-            if k in attrs_to_avoid_copy:
-                setattr(new_struct, k, None)
-            elif k in attrs_to_share_by_ref:
-                setattr(new_struct, k, getattr(src, k))
-            else:
-                value = getattr(src, k)
-                if isinstance(value, list):
-                    setattr(new_struct, k, [copy.deepcopy(elem, memo) for elem in value])
-                else:
-                    setattr(new_struct, k, copy.deepcopy(value, memo))
-        except AttributeError:
-            pass
-    return new_struct
 
 
 class Term(ComplexStructure):
@@ -429,16 +394,6 @@ class Term(ComplexStructure):
         """
         return frozenset(factor.structural_label for factor in self.structure)
 
-    @property
-    def term_label_without_power(self):
-        # TODO(deprecate): use factors_labels_without_power
-        return self.factors_labels_without_power
-
-    @property
-    def term_label(self):
-        # TODO(deprecate): use factors_labels
-        return self.factors_labels
-
 
 class Equation(ComplexStructure):
     __slots__ = ['_history', 'structure', 'interelement_operator', 'n_immutable', 'pool',
@@ -516,20 +471,25 @@ class Equation(ComplexStructure):
         for i in range(len(basic_structure), int(self.metaparameters['terms_number']['value'])):
             new_term = Term(self.pool, max_factors_in_term=self.metaparameters['max_factors_in_term']['value'],
                             mandatory_family=None, passed_term=None)
-            uniq_attempts = 0
-            for _ in range(max_iter):
-                uniq_attempts += 1
-                if new_term.factors_labels not in self.terms_labels:
-                    _loop_stats.record('Equation.__init__.unique_term', uniq_attempts, max_iter)
-                    break
+            def _term_mutate():
                 new_term.randomize()
                 new_term.reset_saved_state()
-            else:
-                _loop_stats.record('Equation.__init__.unique_term', uniq_attempts, max_iter)
+            success, _ = retry_until_unique(
+                predicate=lambda: new_term.factors_labels not in self.terms_labels,
+                mutate=_term_mutate,
+                max_iter=max_iter,
+                stats_name='Equation.__init__.unique_term',
+            )
+            if not success:
                 # Pool can't yield a unique term against the current
                 # structure -- stop, don't try further slots. Subsequent
                 # ``new_term`` draws would face the same exhausted pool,
                 # so the only honest outcome is a shorter equation.
+                # (D1 raises for the same exhaustion class in
+                # InitialParetoLevelSorting; here we warn-accept because
+                # ``Equation.__init__`` is invoked during the initial
+                # population draw and aborting fit() entirely would be
+                # surprising user-facing behavior.)
                 warnings.warn(
                     f"Equation.__init__: no unique term in {max_iter} attempts at slot {i}; "
                     "pool may be exhausted -- stopping with a shorter equation."
@@ -937,19 +897,25 @@ class Equation(ComplexStructure):
         cap = int(self.metaparameters['terms_number']['value'])
         if len(self.structure) >= cap:
             return False
+        # Cap diverges from the 100-attempt convention shared by
+        # ``Equation.__init__.unique_term`` and
+        # ``simplify_equation.replace_term``: this method is invoked in
+        # an outer loop (``EquationMutation.apply``) that retries by
+        # drawing more terms anyway, so a tight fast-fail saves cycles
+        # when the pool is exhausted.
         max_iter = 10
         new_term = Term(self.pool, max_factors_in_term=self.metaparameters['max_factors_in_term']['value'],
                         mandatory_family=None, passed_term=None)
-        attempts = 0
-        for _ in range(max_iter):
-            attempts += 1
-            if new_term.factors_labels not in self.terms_labels:
-                self.structure.append(deepcopy(new_term))
-                self._invalidate_label_cache()
-                _loop_stats.record('add_random_term', attempts, max_iter)
-                return True
-            new_term.randomize()
-        _loop_stats.record('add_random_term', attempts, max_iter)
+        success, _ = retry_until_unique(
+            predicate=lambda: new_term.factors_labels not in self.terms_labels,
+            mutate=lambda: new_term.randomize(),
+            max_iter=max_iter,
+            stats_name='add_random_term',
+        )
+        if success:
+            self.structure.append(deepcopy(new_term))
+            self._invalidate_label_cache()
+            return True
         return False
 
     @property

@@ -22,6 +22,59 @@ from epde.solver.models import Fourier_embedding, mat_model
 from epde.preprocessing.smoothers import NN
 from numpy.lib.stride_tricks import sliding_window_view
 
+from epde import _loop_stats
+
+
+def retry_until_unique(*, predicate, mutate, max_iter: int, stats_name: str):
+    """Bounded retry loop: keep mutating a candidate until ``predicate`` holds.
+
+    Centralizes the (a) attempt-counter (b) cap-bound (c) ``_loop_stats``
+    bookkeeping that the term-replacement loops share. Each call site
+    owns the candidate object and decides the cap-hit policy
+    (warn-accept, return False, raise, silently continue, etc.) based on
+    the returned ``success`` flag.
+
+    Args:
+        predicate: zero-arg callable returning ``True`` when the
+            candidate is acceptable. Called once per attempt before the
+            mutation; if it returns ``True`` on the first call, no
+            mutation is performed and ``attempts == 1``.
+        mutate: zero-arg callable invoked between attempts to randomize
+            the candidate (e.g. ``term.randomize()``). Not called after
+            the final attempt.
+        max_iter: maximum number of predicate checks. The site is
+            expected to use ``100`` to match the cap normalized across
+            ``Equation.__init__``, ``Equation.add_random_term``, and
+            ``simplify_equation.replace_term``.
+        stats_name: key passed to ``_loop_stats.record``; see
+            ``EPDE_LOOP_STATS=1`` instrumentation.
+
+    Returns:
+        ``(success, attempts)`` -- ``success`` is ``True`` iff the
+        predicate held within the cap; ``attempts`` is the number of
+        predicate evaluations performed (1..max_iter).
+
+    Related canonical retry sites that intentionally do NOT use this
+    helper because their cap-hit policy is too entangled:
+        - ``OffspringUpdater.unique_offspring`` (nested cap, sector
+          skip) -- moeadd_specific.py.
+        - ``InitialParetoLevelSorting.unique_candidate`` (raises
+          ``RuntimeError`` per [[project_rps_bidirectional]]) -- ditto.
+        - ``TermMutation.unique_term`` (post-loop revert) -- mutations.py.
+        - ``EquationCrossover.duplicate_offspring`` (post-assembly
+          single gate, not a loop) -- variation.py.
+    """
+    attempts = 0
+    success = False
+    for _ in range(max_iter):
+        attempts += 1
+        if predicate():
+            success = True
+            break
+        mutate()
+    _loop_stats.record(stats_name, attempts, max_iter)
+    return success, attempts
+
 
 
 class BasicDeriv(ABC):
@@ -216,56 +269,51 @@ def flatten(obj):
     return reduce(lambda x, y: x+y, obj)
 
 def factor_params_to_str(factor, set_default_power=False, power_idx=0):
+    """Canonical (label, params) tuple for a single Factor.
+
+    This is the **single source of truth** for the cache-key /
+    structural-identity tuple format used by ``Factor.cache_label``,
+    ``Term.cache_label`` (via per-factor recursion), and any tensor
+    cache lookup keyed on a factor. Anything that needs to identify a
+    factor by ``(label, params)`` MUST call this helper rather than
+    rebuilding the tuple inline -- see [[feedback_label_format_coupling]].
+
+    Quantization for structural dedup is a **separate** concern, handled
+    by ``Factor.structural_label`` via ``Factor._quantized_params``;
+    that path is keyed on ``(label, quantized_params)`` and bucketizes
+    continuous-tolerance params (e.g. trig ``freq``).
+    """
     param_label = np.copy(factor.params)
     if set_default_power:
         param_label[power_idx] = 1.
     return (factor.label, tuple(param_label))
 
-def form_label(x, y):
-    print(type(x), type(y.cache_label))
-    return x + ' * ' + y.cache_label if len(x) > 0 else x + y.cache_label
-
-def detect_similar_terms_deprecated(base_equation_1, base_equation_2):   # Переделать!
-    same_terms_from_eq1 = []
-    same_terms_from_eq2 = []
-    eq2_processed = np.full(
-        shape=len(base_equation_2.structure), fill_value=False)
-
-    similar_terms_from_eq1 = []
-    similar_terms_from_eq2 = []
-
-    different_terms_from_eq1 = []
-    different_terms_from_eq2 = []
-    for eq1_term in base_equation_1.structure:
-        found_similar = False
-        for idx, eq2_term in enumerate(base_equation_2.structure):
-            if eq1_term == eq2_term and not eq2_processed[idx]:
-                found_similar = True
-                same_terms_from_eq1.append(eq1_term)
-                same_terms_from_eq2.append(eq2_term)
-                eq2_processed[idx] = True
-                break
-            elif ({token.label for token in eq1_term.structure} == {token.label for token in eq2_term.structure} and
-                  len(eq1_term.structure) == len(eq2_term.structure) and not eq2_processed[idx]):
-                found_similar = True
-                similar_terms_from_eq1.append(eq1_term)
-                similar_terms_from_eq2.append(eq2_term)
-                eq2_processed[idx] = True
-                break
-        if not found_similar:
-            different_terms_from_eq1.append(eq1_term)
-
-    for idx, elem in enumerate(eq2_processed):
-        if not elem:
-            different_terms_from_eq2.append(base_equation_2.structure[idx])
-
-    assert len(same_terms_from_eq1) + len(similar_terms_from_eq1) + \
-        len(different_terms_from_eq1) == len(base_equation_1.structure)
-    assert len(same_terms_from_eq2) + len(similar_terms_from_eq2) + \
-        len(different_terms_from_eq2) == len(base_equation_2.structure)
-    return [same_terms_from_eq1, similar_terms_from_eq1, different_terms_from_eq1], [same_terms_from_eq2, similar_terms_from_eq2, different_terms_from_eq2]
 
 def detect_similar_terms(base_equation_1, base_equation_2):
+    """Three-way split of each equation's terms by **exact** structural identity.
+
+    Returns ``([same1, similar1, different1], [same2, similar2, different2])``
+    where each inner list contains ``Term`` objects from the corresponding
+    parent equation, classified by ``Term.factors_labels`` membership:
+
+    - **same**: term's ``factors_labels`` appears in BOTH equations
+      (set intersection).
+    - **similar**: term's ``factors_labels`` appears only in THIS
+      equation (set difference).
+    - **different**: **always empty** under the current set-based
+      partition -- every term's ``factors_labels`` is, by construction,
+      a member of its own equation's ``terms_labels``, so the
+      ``else`` branch is unreachable. Preserved as the third list
+      element to keep the tuple shape stable for callers that destructure
+      positionally.
+
+    Used by ``epde.operators.singleobjective.variation.EquationCrossover``;
+    the multi-objective EquationCrossover uses its own hybrid
+    random-partition logic instead (see [[project_rps_bidirectional]]).
+    Identity bucketing is delegated to ``Term.factors_labels`` -- which
+    routes through ``Factor.structural_label`` and so honors the
+    continuous-tolerance quantization defined per family.
+    """
     all_first_equation_terms = base_equation_1.terms_labels
     all_second_equation_terms = base_equation_2.terms_labels
 
@@ -277,8 +325,6 @@ def detect_similar_terms(base_equation_1, base_equation_2):
     different_terms_from_eq2 = []
 
     common_terms = all_first_equation_terms.intersection(all_second_equation_terms)
-    all_terms = all_first_equation_terms.union(all_second_equation_terms)
-    different_terms = all_first_equation_terms.symmetric_difference(all_second_equation_terms)
 
     for term in base_equation_1.structure:
         if term.factors_labels in common_terms:
@@ -312,7 +358,10 @@ def filter_powers(gene):
                 max_power = param_info['bounds'][1]
                 power_idx = param_idx
                 break
-        powered_token.params[power_idx] = total_power if total_power < max_power else max_power
+        powered_token.set_param(
+            total_power if total_power < max_power else max_power,
+            idx=power_idx,
+        )
         if powered_token not in gene_filtered:
             gene_filtered.append(powered_token)
     return gene_filtered

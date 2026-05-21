@@ -16,7 +16,6 @@ from functools import partial
 from epde.structure.structure_template import check_uniqueness
 from epde.optimizers.moeadd.moeadd import ParetoLevels
 
-from epde.supplementary import detect_similar_terms, detect_similar_terms, flatten
 from epde.decorators import HistoryExtender, ResetEquationStatus
 
 from epde.operators.utils.template import CompoundOperator, add_base_param_to_operator
@@ -333,20 +332,6 @@ class EquationCrossover(CompoundOperator):
     def use_default_tags(self):
         self._tags = {'crossover', 'gene level', 'contains suboperators', 'standard'}
 
-class EquationExchangeCrossover(CompoundOperator):
-    key = 'EquationExchangeCrossover'
-
-    @HistoryExtender(f'\n -> performing equation exchange crossover', 'ba')
-    def apply(self, objective : tuple, arguments : dict):
-        self_args, subop_args = self.parse_suboperator_args(arguments = arguments)
-
-        # objective[0].structure, objective[1].structure = objective[1].structure, objective[0].structure
-        return objective[0], objective[1]
-
-    def use_default_tags(self):
-        self._tags = {'crossover', 'gene level', 'contains suboperators', 'standard'}
-
-
 class TermParamCrossover(CompoundOperator):
     """
     The crossover exchange between parent terms with the same factor functions, that differ only in the factor parameters. 
@@ -400,18 +385,20 @@ class TermParamCrossover(CompoundOperator):
 
             for param_idx in np.arange(objective[0].structure[term1_token_idx].params.size):
                 if param_idx != power_param_idx and param_idx != dim_param_idx:
+                    factor1 = objective[0].structure[term1_token_idx]
+                    factor2 = objective[1].structure[term2_token_idx]
                     try:
-                        objective[0].structure[term1_token_idx].params[param_idx] = (objective[0].structure[term1_token_idx].params[param_idx] + 
-                                                                                     self.params['term_param_proportion'] 
-                                                                                     * (objective[1].structure[term2_token_idx].params[param_idx] 
-                                                                                        - objective[0].structure[term1_token_idx].params[param_idx]))
+                        new_v1 = (factor1.params[param_idx]
+                                  + self.params['term_param_proportion']
+                                  * (factor2.params[param_idx] - factor1.params[param_idx]))
+                        factor1.set_param(new_v1, idx=param_idx)
                     except KeyError:
                         print([(token.label, token.params) for token in objective[0].structure], [(token.label, token.params) for token in objective[1].structure])
-                        raise Exception('Wrong set of parameters:', objective[0].structure[term1_token_idx].params_description, objective[1].structure[term1_token_idx].params_description)
-                    objective[1].structure[term2_token_idx].params[param_idx] = (objective[0].structure[term1_token_idx].params[param_idx] + 
-                                                                                (1 - self.params['term_param_proportion']) 
-                                                                                * (objective[1].structure[term2_token_idx].params[param_idx] 
-                                                                                - objective[0].structure[term1_token_idx].params[param_idx]))
+                        raise Exception('Wrong set of parameters:', factor1.params_description, factor2.params_description)
+                    new_v2 = (factor1.params[param_idx]
+                              + (1 - self.params['term_param_proportion'])
+                              * (factor2.params[param_idx] - factor1.params[param_idx]))
+                    factor2.set_param(new_v2, idx=param_idx)
         objective[0].reset_occupied_tokens(); objective[1].reset_occupied_tokens()
         return objective[0], objective[1]
 
@@ -476,17 +463,15 @@ def get_basic_variation(variation_params : dict = {}):
     add_kwarg_to_operator(operator=equation_crossover)
     metaparameter_crossover = MetaparamerCrossover(['metaparam_proportion'])
     add_kwarg_to_operator(operator = metaparameter_crossover)
-    equation_exchange_crossover = EquationExchangeCrossover()
 
     chromosome_crossover = ChromosomeCrossover(['equation_exchange_prob'])
     add_kwarg_to_operator(operator = chromosome_crossover)
 
     pl_cross = ParetoLevelsCrossover([])
-    
-    equation_crossover.set_suboperators(operators = {'term_param_crossover' : term_param_crossover, 
+
+    equation_crossover.set_suboperators(operators = {'term_param_crossover' : term_param_crossover,
                                                      'term_crossover' : term_crossover})
-    chromosome_crossover.set_suboperators(operators = {'equation_crossover' : [equation_crossover, equation_exchange_crossover],
-                                                       'param_crossover' : metaparameter_crossover},
-                                          probas = {'equation_crossover' : [1.0, 0.0]})
+    chromosome_crossover.set_suboperators(operators = {'equation_crossover' : equation_crossover,
+                                                       'param_crossover' : metaparameter_crossover})
     pl_cross.set_suboperators(operators = {'chromosome_crossover' : chromosome_crossover})
     return pl_cross

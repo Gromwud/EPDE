@@ -15,7 +15,7 @@ import epde.globals as global_var
 from epde.operators.utils.template import CompoundOperator
 from epde.decorators import HistoryExtender
 from epde.structure.main_structures import Term, Equation
-from epde.supplementary import GramSetup
+from epde.supplementary import GramSetup, retry_until_unique
 from epde import _loop_stats
     
 class EqRightPartSelector(CompoundOperator):
@@ -236,7 +236,7 @@ class EqRightPartSelector(CompoundOperator):
                     if factor.structural_label_without_power == common_factor:
                         for i, value in enumerate(factor.params_description):
                             if factor.params_description[i]["name"] == "power":
-                                factor.params[i] -= min_order
+                                factor.set_param(factor.params[i] - min_order, idx=i)
                                 if factor.params[i] == 0:
                                     factors_simplified.append(factor)
                             else:
@@ -248,17 +248,23 @@ class EqRightPartSelector(CompoundOperator):
                 # Cap retries so a constrained token pool can't
                 # deadlock the optimizer (same hazard fixed in
                 # ``enforce_rps_uniqueness``).
-                attempts = 0
-                while attempts < max_iter:
+                def _replacement_acceptable():
                     empty = len(term.structure) == 0
                     not_meaningful = not term.contains_meaningful()
                     signatures = {t.factors_labels for t in objective.structure}
                     duplicate = len(signatures) != len(objective.structure)
-                    if not (empty or not_meaningful or duplicate):
-                        break
-                    term.randomize()
-                    attempts += 1
-                _loop_stats.record('simplify_equation.replace_term', attempts, max_iter)
+                    return not (empty or not_meaningful or duplicate)
+
+                # Cap-hit policy is silently-accept-whatever-state: the
+                # term may still be empty/non-meaningful/duplicate when
+                # the cap fires, and the outer RPS loop is expected to
+                # detect that on its next pass.
+                retry_until_unique(
+                    predicate=_replacement_acceptable,
+                    mutate=lambda: term.randomize(),
+                    max_iter=max_iter,
+                    stats_name='simplify_equation.replace_term',
+                )
 
             # Structure changed: invalidate stale fitness /
             # weights / AIC caches while leaving RPS to the
@@ -356,12 +362,24 @@ def _scrub_conflicting_terms(equation: Equation, fixed_rps, *, max_iter: int = 1
                               skip_idx=None) -> bool:
     """Replace any term in ``equation.structure`` whose factor signature is a
     superset of one of the ``fixed_rps`` signatures (each a ``frozenset`` of
-    factor labels). When ``skip_idx`` is passed, the term at that index is left
-    alone -- used by the bidirectional pass below to preserve an equation's
+    factor labels).
+
+    Term-similarity semantics here are **superset**, unlike
+    ``detect_similar_terms`` (exact match) and ``simplify_equation``'s
+    duplicate check (set-cardinality on ``factors_labels``). A term
+    "conflicts" with a fixed RPS when its factor set contains every
+    factor of the RPS plus optional extras -- this is the
+    cross-equation interference pattern SoEqRPS needs to break, and it
+    is intentionally stricter than exact equality. Future maintainers
+    changing one of the three predicates should NOT propagate it here
+    without re-deriving the bidirectional-RPS proof.
+
+    When ``skip_idx`` is passed, the term at that index is left alone
+    -- used by the bidirectional pass below to preserve an equation's
     own already-selected RPS.
 
-    Returns True if at least one term was randomized; the equation's cached
-    fitness/weight state is reset on the way out.
+    Returns True if at least one term was randomized; the equation's
+    cached fitness/weight state is reset on the way out.
     """
     if not fixed_rps:
         return False

@@ -15,6 +15,7 @@ import epde.globals as global_var
 from epde.operators.utils.template import CompoundOperator
 from epde.decorators import HistoryExtender
 from epde.structure.main_structures import Term, Equation
+from epde.supplementary import GramSetup
 from epde import _loop_stats
     
 class EqRightPartSelector(CompoundOperator):
@@ -52,6 +53,41 @@ class EqRightPartSelector(CompoundOperator):
         # fresh ``EqRightPartSelector()`` per build. Repeat encounters
         # skip the term-sweep via internal ``objective.randomize()``.
         self._bad_structures: set = set()
+
+    @staticmethod
+    def _precompute_super_gram(objective: Equation) -> None:
+        """Build a per-equation super-Gram over all structure terms and
+        attach it to ``objective._gram_super`` for the upcoming term-sweep.
+
+        Each candidate target_idx in the sweep then derives its
+        ``GramSetup`` view via :meth:`GramSetup.from_full` (pure slicing,
+        no recompute). On any failure (e.g. non-finite term evaluations,
+        non-grid-shaped weights) clear the slot and let downstream
+        ``VWSRSparsity.apply`` fall back to its legacy per-target path.
+        """
+        try:
+            if global_var.grid_cache is None:
+                objective._gram_super = None
+                return
+            sample_weights = global_var.grid_cache.g_func[
+                global_var.grid_cache.g_func_mask]
+            grid_shape = global_var.grid_cache.inner_shape
+            feat_list = [term.evaluate(False, grids=None)
+                         for term in objective.structure]
+            Z = np.vstack(feat_list).T
+            if not np.all(np.isfinite(Z)):
+                objective._gram_super = None
+                _loop_stats.record('EqRPS.gram_super_skip', 1, 1)
+                return
+            objective._gram_super = GramSetup.precompute_super(
+                Z, sample_weights, grid_shape)
+            _loop_stats.record('EqRPS.gram_super_built', 1, 1)
+        except Exception:
+            # Defensive: any unexpected failure (shape mismatch, missing
+            # cache) means we silently fall back -- numerics are
+            # preserved, only the speedup is lost.
+            objective._gram_super = None
+            _loop_stats.record('EqRPS.gram_super_skip', 1, 1)
 
     @HistoryExtender('\n -> The equation structure was detected: ', 'a')
     def apply(self, objective : Equation, arguments : dict):
@@ -116,6 +152,12 @@ class EqRightPartSelector(CompoundOperator):
                 objective.randomize()
                 continue
 
+            # Tier 3: precompute the super-Gram over all terms ONCE per
+            # outer iter so the term-sweep below derives per-target
+            # GramSetup views via pure slicing instead of rebuilding the
+            # windowed XTWX matmul for every candidate.
+            self._precompute_super_gram(objective)
+
             for target_idx, target_term in enumerate(objective.structure):
                 if not objective.structure[target_idx].contains_deriv(objective.main_var_to_explain):
                     continue
@@ -155,6 +197,11 @@ class EqRightPartSelector(CompoundOperator):
                 objective.is_correct_right_part = True
 
         _loop_stats.record('EqRPS.outer', outer_attempts, outer_max_iter)
+        # Drop the super-Gram so a downstream consumer (e.g. fitness
+        # recomputation outside the term-sweep) falls back to the
+        # per-target ``GramSetup.__init__`` path; the cached super-Gram
+        # is only valid for the structure observed during the sweep.
+        objective._gram_super = None
         objective.right_part_selected = True
         objective.remove_zero_terms()
 

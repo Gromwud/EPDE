@@ -240,7 +240,7 @@ class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
     #         cv = spread ** 2 / (center ** 2 + spread ** 2)
     #     return np.nan_to_num(cv)
 
-    def fit(self, X, y, sample_weights=None):
+    def fit(self, X, y, sample_weights=None, gram_setup=None):
         n_samples, n_features = X.shape
 
         # 1. AUGMENTATION: Treat intercept as a constant physical term C
@@ -260,7 +260,13 @@ class PhysicsInformedLasso(BaseEstimator, RegressorMixin):
         # instead of re-running the expensive ``X^T diag(w) X`` matmul on
         # the surviving columns. The math is exact: a sub-block of the
         # full Gram equals the Gram of the corresponding sub-columns.
-        gram_setup = GramSetup(X, y, sample_weights, self.grid_shape)
+        #
+        # Tier 3 fast path: when the caller (EqRPS's term-sweep) has
+        # already built a per-target ``GramSetup`` view from the
+        # super-Gram, reuse it -- saves the windowed matmul that
+        # otherwise repeats for every candidate target_idx in one sweep.
+        if gram_setup is None:
+            gram_setup = GramSetup(X, y, sample_weights, self.grid_shape)
 
         outer_iteration = 0
         max_outer_iters = total_features  # Max possible eliminations
@@ -487,11 +493,25 @@ class VWSRSparsity(CompoundOperator):
 
         estimator = PhysicsInformedLasso(grid_shape=global_var.grid_cache.inner_shape)
 
-        _, target, features = objective.evaluate(normalize = True, return_val = False)
-
         self.g_fun_vals = global_var.grid_cache.g_func[global_var.grid_cache.g_func_mask]
 
-        estimator.fit(features, target, self.g_fun_vals)
+        # Tier 3 fast path: if the upstream EqRPS term-sweep has
+        # precomputed a super-Gram (and the cached Z over all terms),
+        # derive ``target`` / ``features`` plus the per-target
+        # ``GramSetup`` by slicing -- skips both objective.evaluate's
+        # vstack + transpose AND the windowed XTWX matmul.
+        gram_super = getattr(objective, '_gram_super', None)
+        if gram_super is not None:
+            Z = gram_super['Z']
+            t = objective.target_idx
+            target = Z[:, t]
+            feature_indexes = [i for i in range(Z.shape[1]) if i != t]
+            features = Z[:, feature_indexes]
+            gram_setup = GramSetup.from_full(gram_super, t)
+        else:
+            _, target, features = objective.evaluate(normalize=True, return_val=False)
+            gram_setup = None
+        estimator.fit(features, target, self.g_fun_vals, gram_setup=gram_setup)
         objective.weights_internal = estimator.coef_
         objective.weights_internal_evald = True
         objective.weights_final = np.append([weight for weight in estimator.coef_ if weight != 0], estimator.intercept_)

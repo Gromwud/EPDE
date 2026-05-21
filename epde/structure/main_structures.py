@@ -447,7 +447,8 @@ class Equation(ComplexStructure):
                  '_weights_internal', 'weights_internal_evald', 'fitness_calculated', 'stability_calculated', 'aic_calculated', 'solver_form_defined',
                  '_fitness_value', '_coefficients_stability', '_aic', 'metaparameters', 'main_var_to_explain',
                  '_eval_cache', '_cached_sw_weights',
-                 '_terms_labels_cache', '_terms_labels_without_power_cache'] # , '_solver_form'
+                 '_terms_labels_cache', '_terms_labels_without_power_cache',
+                 '_gram_super'] # , '_solver_form'
 
 
     def __init__(self, pool: TFPool, basic_structure: Union[list, tuple, set], var_to_explain: str = None,
@@ -825,6 +826,10 @@ class Equation(ComplexStructure):
         self._cached_sw_weights = None
         self._terms_labels_cache = None
         self._terms_labels_without_power_cache = None
+        # Tier 3 super-Gram cache (set by EqRightPartSelector for the
+        # term-sweep, never persists past one sweep). Structural reset
+        # invalidates it.
+        self._gram_super = None
 
     def _invalidate_label_cache(self):
         """Drop memoized caches keyed on the current structure; call after
@@ -843,6 +848,9 @@ class Equation(ComplexStructure):
         self._terms_labels_without_power_cache = None
         if hasattr(self, '_eval_cache'):
             self._eval_cache = {}
+        # Super-Gram is built from term evaluations; any structural
+        # change invalidates the matched-rank assumption.
+        self._gram_super = None
 
 
     @HistoryExtender('\n -> was copied by deepcopy(self)', 'n')
@@ -859,6 +867,7 @@ class Equation(ComplexStructure):
             attrs_to_avoid_copy=(
                 '_cached_sw_weights',
                 '_terms_labels_cache', '_terms_labels_without_power_cache',
+                '_gram_super',
             ),
             attrs_to_share_by_ref=('pool',),
         )

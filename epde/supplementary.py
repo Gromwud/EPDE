@@ -590,6 +590,114 @@ class GramSetup:
             all_weights.append(w.squeeze(-1))
         return np.vstack(all_weights)
 
+    @classmethod
+    def precompute_super(cls, Z, sample_weights, grid_shape):
+        """Build a per-dim super-Gram over ``Z_aug = column_stack(Z, ones)``
+        once. Returns an opaque dict consumed by :meth:`from_full` to
+        derive per-target GramSetup views via pure slicing.
+
+        Used by EqRightPartSelector's term-sweep: instead of rebuilding
+        the windowed XTWX matrix for each candidate target column (which
+        does the same reshape/window/matmul on the SAME underlying Z),
+        precompute once over the full Z and slice out target-specific
+        sub-blocks. The math is exact -- (Z[:, ~t])^T W Z[:, ~t] is the
+        sub-block of (Z_aug)^T W Z_aug at rows/cols ``~t U intercept``.
+
+        ``Z`` is shape (n_samples, n_terms); ``sample_weights`` is the
+        flat per-sample weight vector; ``grid_shape`` is the same shape
+        ``GramSetup.__init__`` consumes.
+        """
+        n_samples, n_terms = Z.shape
+        Z_aug = np.hstack([Z, np.ones((n_samples, 1))])
+        n_features_aug = n_terms + 1
+
+        Z_grid = Z_aug.reshape(*grid_shape, n_features_aug)
+        sw_grid = sample_weights.reshape(*grid_shape)
+        per_dim_super = []
+
+        for dim in range(len(grid_shape)):
+            window_size = grid_shape[dim] // 2
+            num_horizons = window_size + 1
+            step_size = max(1, num_horizons // 30)
+
+            Z_windows = sliding_window_view(Z_grid, window_shape=window_size, axis=dim)
+            w_windows = sliding_window_view(sw_grid, window_shape=window_size, axis=dim)
+
+            Z_windows = Z_windows.take(indices=range(0, num_horizons, step_size), axis=dim)
+            w_windows = w_windows.take(indices=range(0, num_horizons, step_size), axis=dim)
+
+            Z_windows = np.moveaxis(Z_windows, dim, 0)
+            w_windows = np.moveaxis(w_windows, dim, 0)
+            Z_windows = np.moveaxis(Z_windows, -2, -1)
+
+            batch_size = Z_windows.shape[0]
+            Z_batch = Z_windows.reshape(batch_size, -1, n_features_aug)
+            weights_batch = w_windows.reshape(batch_size, -1, 1)
+
+            ZTW = Z_batch.transpose(0, 2, 1) * weights_batch.transpose(0, 2, 1)
+            XTWX_super = ZTW @ Z_batch
+
+            diag = np.diagonal(XTWX_super, axis1=1, axis2=2)
+            scales_super = np.sqrt(np.maximum(np.abs(diag), 1e-30))
+
+            per_dim_super.append((XTWX_super, scales_super))
+
+        return {
+            'per_dim_super': per_dim_super,
+            'n_features_aug': n_features_aug,
+            'grid_shape': grid_shape,
+            'n_terms': n_terms,
+            # Cached so downstream VWSRSparsity can derive per-target
+            # ``target`` / ``features`` by slicing instead of re-calling
+            # objective.evaluate(normalize=True) -- which would force
+            # another vstack + transpose of the same term evaluations
+            # for every candidate target_idx in the sweep.
+            'Z': Z,
+        }
+
+    @classmethod
+    def from_full(cls, super_data, target_idx_in_terms):
+        """Construct a per-target GramSetup view from precomputed
+        super-Gram data via slicing.
+
+        ``super_data`` is the dict returned by :meth:`precompute_super`.
+        ``target_idx_in_terms`` is the column index within Z (the terms
+        portion) that the caller wants as the regression target; the
+        intercept column stays in the feature set automatically.
+
+        The returned object has the same ``n_features_aug``, ``grid_shape``
+        and ``_per_dim`` shape contract as a regular ``GramSetup`` so
+        downstream code (``PhysicsInformedLasso.fit`` -> ``solve``) is
+        unchanged.
+        """
+        per_dim_super = super_data['per_dim_super']
+        n_features_aug_super = super_data['n_features_aug']
+        grid_shape = super_data['grid_shape']
+
+        if not (0 <= target_idx_in_terms < n_features_aug_super - 1):
+            raise IndexError(
+                f'target_idx_in_terms={target_idx_in_terms} out of range '
+                f'[0, {n_features_aug_super - 1}) for super-Gram with '
+                f'{n_features_aug_super - 1} terms (+1 intercept).'
+            )
+
+        active = np.ones(n_features_aug_super, dtype=bool)
+        active[target_idx_in_terms] = False
+
+        instance = cls.__new__(cls)
+        instance.n_features_aug = int(active.sum())  # n_terms (incl. intercept)
+        instance.grid_shape = grid_shape
+        instance._per_dim = []
+        for XTWX_super, scales_super in per_dim_super:
+            XTWX_target = XTWX_super[:, active, :][:, :, active]
+            # XTWy = (Z_aug[:, ~t])^T W Z[:, t] = column t of XTWX_super
+            # at rows in ``active``.
+            XTWy_target = XTWX_super[:, active,
+                                     target_idx_in_terms:target_idx_in_terms + 1]
+            scales_target = scales_super[:, active]
+            instance._per_dim.append((XTWX_target, XTWy_target, scales_target))
+        return instance
+
 
 def calculate_weights(X, y, sample_weights, grid_shape, fit_intercept=True):
     """

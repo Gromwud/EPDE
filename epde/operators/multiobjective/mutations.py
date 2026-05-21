@@ -64,20 +64,43 @@ class EquationMutation(CompoundOperator):
     def apply(self, objective : Equation, arguments : dict):
         self_args, subop_args = self.parse_suboperator_args(arguments = arguments)
 
-        # term_idx = np.random.choice(range(len(objective.structure)))
-        # objective.structure[term_idx] = self.suboperators['mutation'].apply(objective=(term_idx, objective),
-        #                                                                     arguments=subop_args['mutation'])
-        # objective.structure[term_idx].reset_saved_state()
         equation = deepcopy(objective)
-        attempts = 0
-        for _ in range(10):
-            attempts += 1
+
+        # Phase 1 -- per-term Bernoulli term-replace via the ``mutation``
+        # sub-operator (TermMutation). Restores the pre-aaea0f4 design
+        # that the JSON defaults still reflect (r_mutation = 0.6 was
+        # vestigial after that commit silently replaced term-replace with
+        # term-add). Without this phase mature chromosomes spin on
+        # add_random_term no-ops once they reach the terms_number cap
+        # and structural exploration collapses to crossover alone.
+        # Skip ``n_immutable`` head terms so the right-part anchor and
+        # any mandatory_family terms survive across mutations.
+        r_mutation = self.params['r_mutation']
+        replace_attempts = 0
+        mutable_count = max(1, len(equation.structure) - equation.n_immutable)
+        for term_idx in range(equation.n_immutable, len(equation.structure)):
+            if np.random.uniform(0, 1) <= r_mutation:
+                replace_attempts += 1
+                self.suboperators['mutation'].apply(
+                    objective=(term_idx, equation),
+                    arguments=subop_args['mutation'],
+                )
+        _loop_stats.record('EquationMutation.replace_terms',
+                           replace_attempts, mutable_count)
+
+        # Phase 2 -- bounded term-add. Two caps apply: ``n_added_terms``
+        # (per-call ceiling, default 5 per JSON) and the
+        # ``terms_number`` metaparameter (chromosome-wide ceiling,
+        # enforced inside ``add_random_term``). Either cap-hit or pool
+        # exhaustion breaks the loop -- canonical structure-dedup
+        # contract.
+        n_added = int(self.params['n_added_terms'])
+        add_attempts = 0
+        for _ in range(n_added):
+            add_attempts += 1
             if not equation.add_random_term():
-                # Either ``terms_number`` reached or the pool ran out of
-                # uniques. Either way, further attempts would no-op or
-                # risk introducing a duplicate downstream -- stop here.
                 break
-        _loop_stats.record('EquationMutation.add_terms', attempts, 10)
+        _loop_stats.record('EquationMutation.add_terms', add_attempts, n_added)
 
         assert len(equation.terms_labels) == len(equation.structure)
 
@@ -246,7 +269,7 @@ def get_basic_mutation(mutation_params):
 
     term_mutation = TermMutation([])
 
-    equation_mutation = EquationMutation(['r_mutation', 'type_probabilities'])
+    equation_mutation = EquationMutation(['r_mutation', 'n_added_terms', 'type_probabilities'])
     add_kwarg_to_operator(operator = equation_mutation)
     
     metaparameter_mutation = MetaparameterMutation(['std', 'mean'])

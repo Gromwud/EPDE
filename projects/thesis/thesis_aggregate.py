@@ -38,6 +38,13 @@ def _load_records(root: str):
     records = defaultdict(lambda: defaultdict(list))  # records[system][pipeline] -> list
     pattern = os.path.join(root, '*', '*.json')
     for path in sorted(glob.glob(pattern)):
+        # Skip the sidecar history files (``<rep>.history.json``); they
+        # carry the same ``pipeline`` / ``seed`` fields as their parent
+        # rep but contain per-epoch candidate trajectories instead of
+        # metrics. Counting them would double every rep that had history
+        # written.
+        if path.endswith('.history.json'):
+            continue
         try:
             with open(path, 'r', encoding='utf-8') as fh:
                 rec = json.load(fh)
@@ -78,10 +85,10 @@ def _summarize_cell(reps: list) -> dict:
 
 def _format_table(summary: dict) -> str:
     header = (
-        '| System | n | Legacy success | Legacy H | Legacy cons | '
-        'NEW success | NEW H | NEW cons | runtime (L / N) |'
+        '| System | n | Legacy success | Legacy H | '
+        'NEW success | NEW H | runtime (L / N) |'
     )
-    sep = '|---|---|---|---|---|---|---|---|---|'
+    sep = '|---|---|---|---|---|---|---|'
     rows = [header, sep]
     for system in sorted(summary.keys()):
         legacy = summary[system].get('legacy', {'n': 0})
@@ -106,9 +113,7 @@ def _format_table(summary: dict) -> str:
         rows.append(
             f"| {system} | {max(legacy['n'], new['n'])} | "
             f"{cell_success(legacy)} | {cell_num(legacy, 'mean_hamming', '{:.1f}')} | "
-            f"{cell_num(legacy, 'consistency', '{:.2f}')} | "
             f"{cell_success(new)} | {cell_num(new, 'mean_hamming', '{:.1f}')} | "
-            f"{cell_num(new, 'consistency', '{:.2f}')} | "
             f"{cell_num(legacy, 'mean_runtime_sec', '{:.1f}')}s / "
             f"{cell_num(new, 'mean_runtime_sec', '{:.1f}')}s |"
         )

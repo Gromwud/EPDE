@@ -53,6 +53,13 @@ def _load_records(root: str):
     records = defaultdict(lambda: defaultdict(list))  # records[system][cell] -> list
     pattern = os.path.join(root, '*', '*.json')
     for path in sorted(glob.glob(pattern)):
+        # Skip ``<rep>.history.json`` sidecars: they carry the same
+        # ``pipeline`` / ``system`` fields as their parent rep but hold
+        # per-epoch candidate trajectories, not metrics. Counting them
+        # doubles every rep that had history written. Same fix as
+        # ``thesis_aggregate._load_records``.
+        if path.endswith('.history.json'):
+            continue
         try:
             with open(path, 'r', encoding='utf-8') as fh:
                 rec = json.load(fh)
@@ -103,9 +110,9 @@ def _cell_axes(cell: str) -> tuple:
 
 def _format_table(summary: dict) -> str:
     header = (
-        '| System | Cell | W | I | R | n | Success | mean H | cons | runtime |'
+        '| System | Cell | W | I | R | n | Success | mean H | runtime |'
     )
-    sep = '|---|---|---|---|---|---|---|---|---|---|'
+    sep = '|---|---|---|---|---|---|---|---|---|'
     rows = [header, sep]
 
     def _check(b: bool) -> str:
@@ -135,7 +142,6 @@ def _format_table(summary: dict) -> str:
                 f"| {system} | {cell} | {_check(w)} | {_check(i)} | {_check(r)} | "
                 f"{c['n']} | {_success(c)} | "
                 f"{_num(c, 'mean_hamming', '{:.1f}')} | "
-                f"{_num(c, 'consistency', '{:.2f}')} | "
                 f"{_num(c, 'mean_runtime_sec', '{:.1f}')}s |"
             )
     return '\n'.join(rows)

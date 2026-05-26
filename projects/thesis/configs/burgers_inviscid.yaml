@@ -13,3 +13,4 @@ truth_equations:
 # correct for the dataset and so credits as a valid discovery.
 truth_alternatives:
   - - "1.0 * u{power: 1.0} = x{power: 1.0, dim: 1.0} * du/dx1{power: 1.0}"
+  - - "0.5 * x{power: 1.0, dim: 0.0} * u{power: 1.0} + -0.5 * x{power: 1.0, dim: 1.0} + 0.0 = du/dx1{power: 1.0} * x{power: 1.0, dim: 1.0}"

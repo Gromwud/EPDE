@@ -12,3 +12,9 @@ truth_equations:
   - "-1.0 * u{power: 1.0} * du/dx2{power: 1.0} + -1.0 * v{power: 1.0} * du/dx1{power: 1.0} + -1.0 * dp/dx2{power: 1.0} + 0.01 * d^2u/dx2^2{power: 1.0} + 0.01 * d^2u/dx1^2{power: 1.0} = du/dx0{power: 1.0}"
   - "-1.0 * u{power: 1.0} * dv/dx2{power: 1.0} + -1.0 * v{power: 1.0} * dv/dx1{power: 1.0} + -1.0 * dp/dx1{power: 1.0} + 0.01 * d^2v/dx2^2{power: 1.0} + 0.01 * d^2v/dx1^2{power: 1.0} = dv/dx0{power: 1.0}"
   - "-1.0 * dv/dx1{power: 1.0} = du/dx2{power: 1.0}"
+
+# NS is a 3-equation system; the (discrepancy, complexity)^3
+# objective space needs more weight vectors than the
+# auto-bumped 32 to cover per-equation trade-offs. Override to 48.
+moeadd:
+  population_size: 48

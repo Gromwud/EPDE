@@ -22,3 +22,8 @@ truth_equations:
 truth_alternatives:
   - - "-1.0 * dv/dx0{power: 1.0} + 20.0 * u{power: 1.0} + -20.0 * v{power: 1.0} = du/dx0{power: 1.0}"
     - "20.0 * du/dx0{power: 1.0} + -20.0 * dv/dx0{power: 1.0} + -1.0 * d^2u/dx0^2{power: 1.0} = d^2v/dx0^2{power: 1.0}"
+
+# LV is a 2-equation system; pin population_size to 32 explicitly
+# so it doesn't quietly rely on the thesis_runner auto-bump.
+moeadd:
+  population_size: 32

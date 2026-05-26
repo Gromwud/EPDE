@@ -13,7 +13,6 @@ Usage:
            [--pipelines legacy new]
            [--out-dir projects/thesis/figures]
            [--max-points 50000]
-           [--no-show]
 """
 from __future__ import annotations
 
@@ -25,6 +24,12 @@ import sys
 import warnings
 from collections import defaultdict
 from typing import Iterable
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+matplotlib.rcParams['pdf.fonttype'] = 42
+matplotlib.rcParams['ps.fonttype'] = 42
 
 import numpy as np
 
@@ -137,12 +142,13 @@ def _safe_log10(values: np.ndarray, floor: float = 1e-12) -> np.ndarray:
 def _scatter_logspace(
     ax, x_lin: np.ndarray, y_lin: np.ndarray,
     color: str, label: str,
-):
+) -> int:
     """Draw a per-pipeline scatter in log-log space.
 
     Filters non-finite points and renders the surviving candidates as a
     semi-transparent scatter. Density is read from point overplotting;
-    no KDE / contour is drawn.
+    no KDE / contour is drawn. Returns the rendered point count so the
+    caller can surface it in the panel title.
     """
     lx = _safe_log10(x_lin)
     ly = _safe_log10(y_lin)
@@ -151,9 +157,10 @@ def _scatter_logspace(
     lx = lx[mask]
     ly = ly[mask]
     if lx.size == 0:
-        return
+        return 0
     ax.scatter(10 ** lx, 10 ** ly, color=color, alpha=0.45, s=14,
-               edgecolors='none', label=f"{label}  (n={lx.size})")
+               edgecolors='none', label=label)
+    return int(lx.size)
 
 
 def _downsample(points: np.ndarray, cap: int) -> np.ndarray:
@@ -166,7 +173,7 @@ def _downsample(points: np.ndarray, cap: int) -> np.ndarray:
 
 def _plot_one_pipeline(
     system: str, pipeline: str, points: np.ndarray,
-    n_reps: int, n_with_hist: int, out_dir: str, show: bool,
+    n_reps: int, n_with_hist: int, out_dir: str,
 ) -> str:
     """Render one figure for one (system, pipeline) and return the path.
 
@@ -175,60 +182,67 @@ def _plot_one_pipeline(
     LASSO vs VWSR complexity) -- overlaying them on shared axes is
     misleading.
     """
-    import matplotlib
-    if not show:
-        matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    matplotlib.rcParams['pdf.fonttype'] = 42
-    matplotlib.rcParams['ps.fonttype'] = 42
-
     n_obj = points.shape[1]
     if n_obj % 2 != 0:
         warnings.warn(f"[{system}/{pipeline}] n_objectives={n_obj} "
                       f"not divisible by 2; plot pairs may be miscoded")
     n_equations = max(1, n_obj // 2)
 
+    # Single pipeline per figure; share x/y so the per-equation panels
+    # of coupled systems (LV / Lorenz / NS) compare on identical
+    # log-log axes.
     fig, axes = plt.subplots(1, n_equations,
                              figsize=(5.2 * n_equations, 4.6),
-                             squeeze=False)
+                             squeeze=False,
+                             sharex=True, sharey=True)
     axes = axes[0]
 
     color = PIPELINE_COLORS.get(pipeline, '#444444')
     label = f"{pipeline}  ({n_with_hist}/{n_reps} reps)"
     y_axis_name = PIPELINE_Y_LABEL.get(pipeline, 'complexity')
 
+    first_drawn_ax = None
     for eq_idx, ax in enumerate(axes):
         ix = 2 * eq_idx
         iy = 2 * eq_idx + 1
         if iy >= n_obj:
             ax.set_visible(False)
             continue
-        _scatter_logspace(ax, points[:, ix], points[:, iy],
-                          color=color, label=label)
+        n_pts = _scatter_logspace(ax, points[:, ix], points[:, iy],
+                                  color=color, label=label)
         ax.set_xscale('log')
         ax.set_yscale('log')
         ax.set_xlabel(f"discrepancy (eq {eq_idx})")
         ax.set_ylabel(f"{y_axis_name} (eq {eq_idx})")
         ax.grid(alpha=0.3, which='both', linewidth=0.4)
-        ax.set_title(f"Equation {eq_idx}")
+        ax.set_title(f"Equation {eq_idx}  (n={n_pts})")
+        if n_pts and first_drawn_ax is None:
+            first_drawn_ax = ax
 
     fig.suptitle(f"{system.upper()} / {pipeline} — candidates throughout "
                  f"search ({points.shape[0]} samples)")
     fig.tight_layout()
+    # Single figure-level legend so coupled-system figures (LV / Lorenz /
+    # NS) don't repeat the pipeline label per equation panel. Anchored
+    # above the figure so it doesn't compete with the data plane.
+    if first_drawn_ax is not None:
+        handles, labels = first_drawn_ax.get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels, loc='lower center',
+                       bbox_to_anchor=(0.5, 1.0), ncol=len(handles),
+                       frameon=False, fontsize=9)
 
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"objectives_density_{system}_{pipeline}.png")
     fig.savefig(out_path, dpi=300, bbox_inches='tight')
     print(f"  [{system}/{pipeline}] saved {out_path}")
-    if show:
-        plt.show()
     plt.close(fig)
     return out_path
 
 
 def plot_system(
     system: str, results_dir: str, pipelines: Iterable[str],
-    out_dir: str, max_points: int, show: bool,
+    out_dir: str, max_points: int,
 ) -> bool:
     """Build one figure per (system, pipeline). Returns True on any success.
 
@@ -250,7 +264,7 @@ def plot_system(
                   f"{points.shape[0]} -> {max_points}")
             points = _downsample(points, max_points)
         _plot_one_pipeline(system, pipeline, points, n_reps, n_with_hist,
-                           out_dir, show)
+                           out_dir)
         any_ok = True
     if not any_ok:
         print(f"  [{system}] nothing to plot, skipping")
@@ -280,8 +294,6 @@ def main(argv=None) -> int:
     p.add_argument('--pipelines', nargs='+', default=['legacy', 'new'])
     p.add_argument('--out-dir', default=DEFAULT_OUT_DIR)
     p.add_argument('--max-points', type=int, default=50000)
-    p.add_argument('--no-show', action='store_true',
-                   help="Disable interactive plt.show().")
     args = p.parse_args(argv)
 
     systems = args.systems or _discover_systems(args.results_dir)
@@ -297,7 +309,7 @@ def main(argv=None) -> int:
     for system in systems:
         print(f"\n>>> {system}")
         ok = plot_system(system, args.results_dir, args.pipelines,
-                         args.out_dir, args.max_points, show=not args.no_show)
+                         args.out_dir, args.max_points)
         any_ok = any_ok or ok
     return 0 if any_ok else 1
 

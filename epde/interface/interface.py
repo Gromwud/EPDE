@@ -361,8 +361,8 @@ class EpdeSearch(object):
                           H: int = 15, neighbors_number: int = 3,
                           nds_method: Callable = fast_non_dominated_sorting,
                           ndl_update_method: Callable = ndl_update,
-                          subregion_mating_limitation: float = .95,
-                          PBI_penalty: float = 1., training_epochs: int = 100,
+                          subregion_mating_limitation: float = .9,
+                          PBI_penalty: float = 5., training_epochs: int = 100,
                           neighborhood_selector: Callable = simple_selector,
                           neighborhood_selector_params: tuple = (4,),
                           early_stopping_callback: Callable = None):
@@ -378,6 +378,10 @@ class EpdeSearch(object):
             H (`float`): optional
                 parameter of uniform spacing between the weight vectors; *H = 1 / delta*
                 should be integer - a number of divisions along an objective coordinate axis.
+                NOTE: currently ignored — the optimizer always uses *H = population_size - 1*,
+                which (for the two-objective weight space used by EPDE) keeps the number of
+                Das-Dennis weight vectors equal to the population size, as the MOEA/DD paper
+                requires (N solutions <-> N weight vectors).
             neighbors_number (`int`): *> 0*, optional
                 number of neighboring weight vectors to be considered during the operation
                 of evolutionary operators as the "neighbors" of the processed sectors.
@@ -394,23 +398,22 @@ class EpdeSearch(object):
                 Dept. Electr. Comput. Eng., Michigan State Univ., East Lansing,
                 MI, USA, Tech. Rep. COIN No. 2014014, 2014.*
             neighborhood_selector (`callable`): optional
-                Method of finding "close neighbors" of the vector with proximity list.
-                The baseline example of the selector, presented in
-                ``moeadd.moeadd_stc.simple_selector``, selects n-adjacent ones.
+                DEPRECATED, ignored. Neighboring weight vectors are chosen by the
+                ``SimpleNeighborSelector`` operator, which randomly picks indices
+                from the proximity list E(i), per Algorithm 3 of the MOEA/DD paper.
             subregion_mating_limitation (`float`): optional
                 The probability of mating selection to be limited only to the selected
-                subregions (adjacent to the weight vector domain).:math:`\delta \in [0., 1.)
+                subregions (adjacent to the weight vector domain). :math:`\delta \in [0., 1.)`,
+                default value is 0.9, as in the MOEA/DD paper.
             neighborhood_selector_params (`tuple|list`): optional
-                Iterable, which will be passed into neighborhood_selector, as
-                an arugument. *None*, is no additional arguments are required inside
-                the selector.
+                DEPRECATED, ignored (see ``neighborhood_selector``).
             training_epochs (`int`): optional
                 Maximum number of iterations, during that the optimization will be held.
                 Note, that if the algorithm converges to a single Pareto frontier,
                 the optimization is stopped.
             PBI_penalty (`float`):  optional
-                The penalty parameter, used in penalty based intersection
-                calculation, defalut value is 1.
+                The penalty parameter :math:`\\theta`, used in penalty based intersection
+                calculation, default value is 5.0, as in the MOEA/DD paper.
 
         Returns:
             None
@@ -418,11 +421,23 @@ class EpdeSearch(object):
         self.optimizer_init_params = {'pop_size': population_size,
                               'H': population_size-1, 'neighbors_number': neighbors_number,
                               'solution_params': solution_params,
-                              'nds_method' : nds_method, 
+                              'nds_method' : nds_method,
                               'ndl_update' : ndl_update_method}
-        
+
         self.optimizer_exec_params = {'epochs' : training_epochs,
                                       'early_stopping_callback' : early_stopping_callback}
+
+        # Forward the user-facing MOEA/DD parameters to the operators of the
+        # strategy assembled in __init__ (previously these arguments were
+        # accepted but silently dropped, so the JSON defaults always applied).
+        director = getattr(self, 'director', None)
+        if director is not None and director.builder is not None:
+            blocks = director.builder.blocks_labeled
+            if 'selection' in blocks:
+                blocks['selection']._operator.params['delta'] = subregion_mating_limitation
+            if 'pareto_updater_compl' in blocks:
+                pareto_updater = blocks['pareto_updater_compl']._operator
+                pareto_updater.suboperators['pareto_level_updater'].params['PBI_penalty'] = PBI_penalty
 
     def set_singleobjective_params(self, population_size: int = 4, solution_params: dict = {},
                                    sorting_method: Callable = simple_sorting, training_epochs: int = 50):
@@ -1068,7 +1083,7 @@ class EpdeSearch(object):
         equations from the population. Furthermore, the annotate of the candidate equations are made with LaTeX toolkit. 
         '''
         if self.multiobjective_mode:
-            self.optimizer.plot_pareto(dimensions=dimensions, **visulaizer_kwargs)
+            return self.optimizer.plot_pareto(dimensions=dimensions, **visulaizer_kwargs)
         else:
             raise NotImplementedError('Solution visualization is implemented only for multiobjective mode.')
             

@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+Multiobjective crossover operators (MOEA/D-D pipeline).
+
+Ownership contract: ``ParetoLevelsCrossover.apply`` deepcopies both
+parents once per pair before any variation. Every operator below it in
+the hierarchy (``ChromosomeCrossover`` -> ``EquationCrossover`` ->
+``TermParamCrossover`` / ``TermCrossover``) therefore owns its inputs
+and is free to mutate them in place -- no further defensive copies are
+made on the hot path.
+
 Created on Wed Jun  2 15:43:19 2021
 
 @author: mike_ubuntu
@@ -94,12 +103,6 @@ class ParetoLevelsCrossover(CompoundOperator):
                 assert len(crossover_pool[pair_idx, 0].vals[eq_key].terms_labels) == len(crossover_pool[pair_idx, 0].vals[eq_key].structure)
                 assert len(crossover_pool[pair_idx, 1].vals[eq_key].terms_labels) == len(crossover_pool[pair_idx, 1].vals[eq_key].structure)
 
-            if len(new_system_1.vars_to_describe) > 1 and np.random.random() < 0.2:
-                key = np.random.choice(new_system_1.vars_to_describe)
-                temp = deepcopy(new_system_1.vals.chromosome[key])
-                new_system_1.vals.chromosome[key] = new_system_2.vals.chromosome[key]
-                new_system_2.vals.chromosome[key] = temp
-
             offsprings.extend([new_system_1, new_system_2])
 
         objective.unplaced_candidates = offsprings
@@ -118,22 +121,24 @@ class ChromosomeCrossover(CompoundOperator):
         assert objective[0].vals.same_encoding(objective[1].vals)
         offspring_1 = objective[0]; offspring_2 = objective[1]
 
-        eqs_keys = offspring_1.vals.equation_keys; params_keys = offspring_2.vals.params_keys
+        eqs_keys = offspring_1.vals.equation_keys
 
-        if len(eqs_keys) > 1 and random.random() < self.params['equation_exchange_prob']:
-            eq_key = random.choice(eqs_keys)
-            temp_eq = deepcopy(offspring_1.vals[eq_key])
-            offspring_1.vals.replace_gene(gene_key = eq_key, value = offspring_2.vals[eq_key])
-            offspring_2.vals.replace_gene(gene_key = eq_key, value = temp_eq)
-
-            return offspring_1, offspring_2
-
+        # Canonical uniform crossover over equation genes: each gene is
+        # either swapped wholesale between the offspring (with prob
+        # ``equation_exchange_prob``) or recombined via equation-level
+        # crossover. Ref-swap is safe: both offspring are already
+        # exclusive deepcopies (see module ownership contract).
         for eq_key in eqs_keys:
-            temp_eq_1, temp_eq_2 = self.suboperators['equation_crossover'].apply(objective = (offspring_1.vals[eq_key],
-                                                                                              offspring_2.vals[eq_key]),
-                                                                                 arguments = subop_args['equation_crossover'])
-            offspring_1.vals.replace_gene(gene_key = eq_key, value = temp_eq_1)
-            offspring_2.vals.replace_gene(gene_key = eq_key, value = temp_eq_2)
+            if len(eqs_keys) > 1 and random.random() < self.params['equation_exchange_prob']:
+                temp_eq = offspring_1.vals[eq_key]
+                offspring_1.vals.replace_gene(gene_key = eq_key, value = offspring_2.vals[eq_key])
+                offspring_2.vals.replace_gene(gene_key = eq_key, value = temp_eq)
+            else:
+                temp_eq_1, temp_eq_2 = self.suboperators['equation_crossover'].apply(objective = (offspring_1.vals[eq_key],
+                                                                                                  offspring_2.vals[eq_key]),
+                                                                                     arguments = subop_args['equation_crossover'])
+                offspring_1.vals.replace_gene(gene_key = eq_key, value = temp_eq_1)
+                offspring_2.vals.replace_gene(gene_key = eq_key, value = temp_eq_2)
 
         # for param_key in params_keys:
         #     temp_param_1, temp_param_2 = self.suboperators['param_crossover'].apply(objective = (offspring_1.vals[param_key],
@@ -188,9 +193,17 @@ class EquationCrossover(CompoundOperator):
             (frozenset of ``factor.label`` only, ignoring params). Each
             such pair is passed through ``TermParamCrossover`` to produce
             two distinct blended variants -- one per offspring.
-          * **Random partition:** the remaining truly-unique terms (no
-            anchor match, no param-blend match) get a coin-flip
-            assignment to one offspring or the other.
+          * **Unique-term exchange:** the remaining truly-unique terms
+            (no anchor match, no param-blend match) are shuffled and
+            paired across parents; each pair goes through the
+            ``term_crossover`` sub-operator, which swaps the terms
+            between offspring with its ``crossover_probability``.
+            Unpaired leftovers stay with their originating parent, so
+            the exchange is length-preserving.
+
+        The whole operator is gated by ``crossover_probability``: with
+        probability ``1 - crossover_probability`` the parents are
+        returned unchanged.
 
         The previous design called ``flatten(detect_similar_terms(...))``
         which produced two offspring containing the structural UNION of
@@ -200,6 +213,9 @@ class EquationCrossover(CompoundOperator):
         keeps the D10 dedup invariant.
         """
         self_args, subop_args = self.parse_suboperator_args(arguments = arguments)
+
+        if np.random.random() > self.params['crossover_probability']:
+            return objective[0], objective[1]
 
         parent1 = objective[0]
         parent2 = objective[1]
@@ -282,15 +298,24 @@ class EquationCrossover(CompoundOperator):
             offspring1_terms.append(blended1)
             offspring2_terms.append(blended2)
 
-        truly_unique = ([('e1', i) for i in remaining_e1]
-                        + [('e2', j) for j in remaining_e2])
-        for source, idx in truly_unique:
-            src = parent1 if source == 'e1' else parent2
-            term = deepcopy(src.structure[idx])
-            if np.random.random() < 0.5:
-                offspring1_terms.append(term)
-            else:
-                offspring2_terms.append(term)
+        e1_unique = list(remaining_e1)
+        e2_unique = list(remaining_e2)
+        np.random.shuffle(e1_unique)
+        np.random.shuffle(e2_unique)
+        n_pairs = min(len(e1_unique), len(e2_unique))
+        for k in range(n_pairs):
+            t1 = deepcopy(parent1.structure[e1_unique[k]])
+            t2 = deepcopy(parent2.structure[e2_unique[k]])
+            t1, t2 = self.suboperators['term_crossover'].apply(
+                objective=(t1, t2),
+                arguments=subop_args['term_crossover'],
+            )
+            offspring1_terms.append(t1)
+            offspring2_terms.append(t2)
+        for i in e1_unique[n_pairs:]:
+            offspring1_terms.append(deepcopy(parent1.structure[i]))
+        for j in e2_unique[n_pairs:]:
+            offspring2_terms.append(deepcopy(parent2.structure[j]))
 
         # Phase 4 -- force-include each parent's target term so right-part
         # validity survives the partition. Anchored / partitioned targets
@@ -404,18 +429,20 @@ class TermParamCrossover(CompoundOperator):
                 if param_idx != power_param_idx and param_idx != dim_param_idx:
                     factor1 = objective[0].structure[term1_token_idx]
                     factor2 = objective[1].structure[term2_token_idx]
+                    # Canonical arithmetic blend, both offspring anchored
+                    # on the ORIGINAL parent values (same formula as
+                    # MetaparamerCrossover). Invariant: v1' + v2' = v1 + v2.
+                    v1 = factor1.params[param_idx]
+                    v2 = factor2.params[param_idx]
+                    proportion = self.params['term_param_proportion']
+                    new_v1 = v1 + proportion * (v2 - v1)
+                    new_v2 = v1 + (1 - proportion) * (v2 - v1)
                     try:
-                        new_v1 = (factor1.params[param_idx]
-                                  + self.params['term_param_proportion']
-                                  * (factor2.params[param_idx] - factor1.params[param_idx]))
                         factor1.set_param(new_v1, idx=param_idx)
+                        factor2.set_param(new_v2, idx=param_idx)
                     except KeyError:
                         print([(token.label, token.params) for token in objective[0].structure], [(token.label, token.params) for token in objective[1].structure])
                         raise Exception('Wrong set of parameters:', factor1.params_description, factor2.params_description)
-                    new_v2 = (factor1.params[param_idx]
-                              + (1 - self.params['term_param_proportion'])
-                              * (factor2.params[param_idx] - factor1.params[param_idx]))
-                    factor2.set_param(new_v2, idx=param_idx)
         objective[0].reset_occupied_tokens(); objective[1].reset_occupied_tokens()
         return objective[0], objective[1]
 

@@ -166,7 +166,7 @@ def compare_systems(correct_symbolic_list, incorrect_symbolic_list, search_obj, 
 def lorenz_test(fit_operator, noise_level=0):
     t = np.load(os.path.join(os.path.dirname(__file__), 't.npy'))
     data = np.load(os.path.join(os.path.dirname(__file__), 'lorenz.npy'))
-    end = 1000
+    end = -1
     t = t[:end]
     x = data[:end, 0]
     y = data[:end, 1]
@@ -224,7 +224,7 @@ def lorenz_discovery(noise_level):
     epde_search_obj.set_preprocessor(default_preprocessor_type='FD',
                                      preprocessor_kwargs={})
 
-    popsize = 16
+    popsize = 48
     epde_search_obj.set_moeadd_params(population_size=popsize, training_epochs=5)
 
     factors_max_number = {'factors_num': [1, 2], 'probas' : [0.8, 0.2]}
@@ -233,8 +233,8 @@ def lorenz_discovery(noise_level):
                                       dimensionality=dimensionality)
     grid_tokens = GridTokens(['x_0', ], dimensionality=dimensionality, max_power=2)
 
-    epde_search_obj.fit(data=[x, y, z], variable_names=['u', 'v', 'w'], max_deriv_order=(1,),
-                        equation_terms_max_number=5, data_fun_pow=1, additional_tokens=[trig_tokens, ],
+    epde_search_obj.fit(data=[x, y, z], variable_names=['u', 'v', 'w'], max_deriv_order=(2,),
+                        equation_terms_max_number=5, data_fun_pow=3, additional_tokens=[trig_tokens, ],
                         equation_factors_max_number=factors_max_number,
                         eq_sparsity_interval=(1e-8, 1e-0))  #
 

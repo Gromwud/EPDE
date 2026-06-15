@@ -79,11 +79,11 @@ class MOEADDDirector(OptimizationPatternDirector):
 
             sparsity_c = map_operator_between_levels(sparsity, 'gene level', 'chromosome level')
 
-        # Chromosome-level RPS that threads "already-fixed RPS signatures"
-        # across the equations of a SoEq, pre-scrubbing each later
-        # equation's structure so the post-hoc enforce_rps_uniqueness check
-        # becomes unnecessary (the entire SoEq comes out uniqueness-clean
-        # by construction).
+        # Chromosome-level RPS that resolves system degeneracy: after the
+        # per-equation sweeps it rerolls any equation whose ACTIVE structure
+        # coincides with another equation's (the same law rearranged), while
+        # allowing legitimate cross-equation coupling terms. The SoEq comes
+        # out degeneracy-clean by construction.
         sys_rps_inner = SoEqRightPartSelector()
         sys_rps_inner.set_suboperators({'eq_right_part_selector': right_part_selector})
         rps_cond = lambda x: any([not elem_eq.right_part_selected for elem_eq in x.vals])

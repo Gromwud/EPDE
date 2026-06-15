@@ -933,7 +933,7 @@ class Equation(ComplexStructure):
         ``Equation.__init__``) MUST stop on the first ``False`` -- once
         the pool stops yielding uniques, further calls will not yield any
         either, and continuing past the failure pushes downstream
-        operators (``_scrub_conflicting_terms``, ``EqRightPartSelector``)
+        operators (``_break_equation_duplication``, ``EqRightPartSelector``)
         into states that violate the duplicate-term invariant.
         """
         cap = int(self.metaparameters['terms_number']['value'])
@@ -1113,6 +1113,33 @@ class Equation(ComplexStructure):
         result = frozenset(term.factors_labels for term in self.structure)
         self._terms_labels_cache = result
         return result
+
+    @property
+    def active_terms_labels(self) -> frozenset:
+        """Frozenset of per-term factor-label sets for the equation's ACTIVE
+        structure: the target term plus every non-target term with a nonzero
+        internal weight. Unlike ``terms_labels`` (full structure, zero-weight
+        padding included) this is the structural fingerprint of the fitted
+        law itself, so two equations of a system encode the same law
+        rearranged iff their values are equal. Factor powers are kept
+        (``u^2`` and ``u`` stay distinct), unlike ``terms_labels_without_power``.
+
+        Not memoized: the value depends on ``weights_internal``, whose setter
+        does not invalidate the label caches. Falls back to the full-structure
+        ``terms_labels`` when the weights have not been evaluated yet.
+        """
+        if not self.weights_internal_evald:
+            return self.terms_labels
+        described = set()
+        for term_idx, term in enumerate(self.structure):
+            if term_idx != self.target_idx:
+                weight_idx = term_idx if term_idx < self.target_idx else term_idx - 1
+                if np.isclose(self.weights_internal[weight_idx], 0):
+                    continue
+            term_labels = term.factors_labels
+            if len(term_labels) > 0:
+                described.add(term_labels)
+        return frozenset(described)
 
     @property
     def factors_labels(self) -> frozenset:

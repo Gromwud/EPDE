@@ -477,24 +477,6 @@ def _regen_or_drop_term(equation: Equation, term, *, max_iter: int = 100,
     return 'dropped'
 
 
-def _equations_share_active_structure(eq_a: Equation, eq_b: Equation) -> bool:
-    """True iff the two equations of a system encode the same law rearranged:
-    their ACTIVE structures (target term + nonzero-weight terms, powered
-    factor labels -- ``Equation.active_terms_labels``) are identical and
-    non-empty.
-
-    This is deliberately EXACT equality, not subset/superset: a coupled
-    system where one equation's active terms are a strict superset of
-    another's (e.g. ``dv/dx0 = v + u + du/dx0`` alongside
-    ``du/dx0 = u + v``) is legitimate and must NOT be flagged. The
-    degenerate case this predicate targets is two equations collapsing
-    into the SAME law (e.g. both Navier-Stokes velocity equations turning
-    into the continuity law).
-    """
-    sig_a = eq_a.active_terms_labels
-    return bool(sig_a) and sig_a == eq_b.active_terms_labels
-
-
 def _target_term_in_other_equation(eq_with_target: Equation,
                                    eq_other: Equation):
     """Return ``eq_with_target``'s TARGET-term factor signature iff that
@@ -585,39 +567,33 @@ def _break_equation_duplication(equation: Equation, shared_sigs, *,
 class SoEqRightPartSelector(CompoundOperator):
     """Chromosome-level RPS that prevents system-level degeneracy.
 
-    Two invariants:
-
-    1. No two equations in a system may have an identical ACTIVE structure
-       -- the same set of fitted nonzero-weight terms (targets included),
-       i.e. the same law rearranged.
-
-    2. No equation's TARGET term may appear as a whole (standalone) term in
-       ANY other equation of the system -- the explained right-part term of
-       one equation is reserved to that equation. This is a whole-term
-       equality rule, NOT a sub-product one: a target derivative appearing
-       only as a FACTOR inside a composite coupling term of another
-       equation (e.g. continuity's ``v_y`` inside the v-momentum convective
-       term ``v*v_y`` of Navier-Stokes) is legitimate physics and is left
-       untouched.
+    Invariant: no equation's TARGET term may appear as a whole (standalone)
+    term in ANY other equation of the system -- the explained right-part
+    term of one equation is reserved to that equation. This is a whole-term
+    equality rule, NOT a sub-product one: a target derivative appearing only
+    as a FACTOR inside a composite coupling term of another equation (e.g.
+    continuity's ``v_y`` inside the v-momentum convective term ``v*v_y`` of
+    Navier-Stokes) is legitimate physics and is left untouched.
 
     Cross-equation FACTOR sharing is otherwise allowed: an equation for
     ``v`` may carry ``du/dx0`` inside a composite term even when the
     equation for ``u`` explains ``du/dx0`` -- only a bare standalone
     ``du/dx0`` term in the ``v`` equation is forbidden.
 
-    The degenerate cases this guards against: (1) both equations of a
-    coupled system converging onto one shared law (e.g. both Navier-Stokes
-    velocity equations becoming the continuity law), collapsing the system
-    into two copies of a single relation; and (2) one equation's explained
-    derivative leaking as a standalone term into a sibling equation (e.g.
-    ``dv/dx0`` riding into the ``u`` equation of Lotka-Volterra).
+    This subsumes the old "no two equations share an identical active
+    structure" guard: two equations that collapse onto the same law (e.g.
+    both Navier-Stokes velocity equations becoming continuity) necessarily
+    have DIFFERENT targets, so each carries the other's target as a
+    standalone term and is broken here. (The only case it cannot catch --
+    two full duplicates sharing the identical target -- requires a composite
+    target carrying both equations' main-var derivatives, which is
+    unreachable for the studied systems.)
 
     Mechanics: a plain per-equation forward pass first, then a bounded
-    convergence loop that, each pass, (a) rerolls the later member of any
-    pair of equations with equal active structures and (b) rerolls any
-    equation carrying another equation's target term as a whole term
-    (both via ``_break_equation_duplication`` + right-part re-selection).
-    The loop exits at the first pass with no changes (fixed point).
+    convergence loop that, each pass, rerolls any equation carrying another
+    equation's target term as a whole term (via
+    ``_break_equation_duplication`` + right-part re-selection). The loop
+    exits at the first pass with no changes (fixed point).
     """
     key = 'SoEqRightPartSelector'
 
@@ -640,38 +616,13 @@ class SoEqRightPartSelector(CompoundOperator):
         for equation in equations:
             eq_selector.apply(objective=equation, arguments=eq_args)
 
-        # Degeneracy resolution: reroll the later member of any pair of
-        # equations whose active structures coincide, until a full pass
-        # is clean or the pass budget is exhausted.
+        # Degeneracy resolution: enforce target-term uniqueness until a full
+        # pass makes no change or the pass budget is exhausted.
         max_passes = 50
         passes_used = 0
         for _ in range(max_passes):
             passes_used += 1
             any_changes = False
-            for k in range(1, len(equations)):
-                for j in range(k):
-                    eq_j, eq_k = equations[j], equations[k]
-                    if not _equations_share_active_structure(eq_j, eq_k):
-                        continue
-                    shared_sigs = eq_j.active_terms_labels
-                    preferred_sigs = []
-                    try:
-                        preferred_sigs.append(
-                            eq_j.structure[eq_j.target_idx].factors_labels)
-                    except (AttributeError, IndexError, TypeError):
-                        pass
-                    changed = _break_equation_duplication(
-                        eq_k, shared_sigs, preferred_sigs=preferred_sigs)
-                    if not changed:
-                        continue
-                    # The structure mutated: force re-selection so the
-                    # post-reroll structure gets the best right part.
-                    eq_k.right_part_selected = False
-                    eq_k.simplified = False
-                    eq_k.is_correct_right_part = False
-                    eq_selector.apply(objective=eq_k, arguments=eq_args)
-                    any_changes = True
-
             # Target-term uniqueness: no equation's TARGET term may appear
             # as a whole (standalone) term in ANOTHER equation of the
             # system. Directional -- scan every ordered pair (i -> j) and,

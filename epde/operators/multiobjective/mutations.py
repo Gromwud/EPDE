@@ -95,15 +95,19 @@ class EquationMutation(CompoundOperator):
         # (was ~5ms per call, ~5000 calls per lv_new rep).
         equation = objective
 
-        # Phase 1 -- per-term Bernoulli term-replace via the ``mutation``
-        # sub-operator (TermMutation). Restores the pre-aaea0f4 design
-        # that the JSON defaults still reflect (r_mutation = 0.6 was
-        # vestigial after that commit silently replaced term-replace with
-        # term-add). Without this phase mature chromosomes spin on
-        # add_random_term no-ops once they reach the terms_number cap
-        # and structural exploration collapses to crossover alone.
-        # Skip ``n_immutable`` head terms so the right-part anchor and
-        # any mandatory_family terms survive across mutations.
+        # Snapshot the term-set fingerprint before mutation; reset_state runs
+        # below only if the SET changes, so an untouched equation keeps its
+        # right part and skips the term-sweep. Set granularity is sound (the
+        # fit depends only on the term set); the one same-set/different-order
+        # case (drop then re-add the same signature) is blocked by dropped_sigs.
+        structure_before = equation.terms_labels
+
+        # Per-term Bernoulli term-replace via the ``mutation`` sub-operator
+        # (TermMutation), governed by ``r_mutation``. Without it, mature
+        # chromosomes at the terms_number cap spin on add_random_term no-ops
+        # and structural exploration collapses to crossover alone. Skip
+        # ``n_immutable`` head terms so the right-part anchor and any
+        # mandatory_family terms survive across mutations.
         r_mutation = self.params['r_mutation']
         replace_attempts = 0
         mutable_count = max(1, len(equation.structure) - equation.n_immutable)
@@ -121,9 +125,15 @@ class EquationMutation(CompoundOperator):
         _loop_stats.record('EquationMutation.replace_terms',
                            replace_attempts, mutable_count)
 
-        # Phase 2 -- probabilistic term-add: each of the ``n_added_terms``
-        # slots fires a Bernoulli trial at ``term_addition_prob``, so the
-        # genome no longer grows unconditionally on every mutation call.
+        # Signatures dropped by the replace step. The add step below must not
+        # re-add them: that is the only way to restore the original set while
+        # permuting structure order (desyncing the position-indexed weights),
+        # so forbidding it keeps the set-based change detection complete.
+        dropped_sigs = structure_before - equation.terms_labels
+
+        # Probabilistic term-add: each of the ``n_added_terms`` slots fires a
+        # Bernoulli trial at ``term_addition_prob``, so the genome no longer
+        # grows unconditionally on every mutation call.
         # The ``terms_number`` metaparameter (chromosome-wide ceiling,
         # enforced inside ``add_random_term``) still caps growth; cap-hit
         # or pool exhaustion breaks the loop.
@@ -134,11 +144,16 @@ class EquationMutation(CompoundOperator):
             if np.random.random() >= term_addition_prob:
                 continue
             add_attempts += 1
-            if not equation.add_random_term():
+            if not equation.add_random_term(forbidden_sigs=dropped_sigs):
                 break
         _loop_stats.record('EquationMutation.add_terms', add_attempts, n_added)
 
         assert len(equation.terms_labels) == len(equation.structure)
+
+        # Reset RPS state iff the term set actually changed; a no-op mutation
+        # leaves the equation's right-part selection intact (not re-swept).
+        if equation.terms_labels != structure_before:
+            equation.reset_state(reset_right_part=True)
 
         return equation
 

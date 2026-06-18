@@ -405,7 +405,9 @@ class OffspringUpdater(CompoundOperator):
             offspring_attempt_limit = self.params['offspring_attempt_limit']
             # self.suboperators['sparsity'].apply(objective=offspring,
             #                                     arguments=subop_args['sparsity'])
-            offspring.reset_state(True)
+            # RPS-state reset is no longer done here in bulk; it is coupled to
+            # the structure-changing operators (EquationCrossover / Equation
+            # Mutation), so only changed equations are re-selected.
             # Crossover offspring are deepcopies of their parents and so
             # inherit the parent's cached sector domain / objective vector
             # (precomputed_domain / precomputed_value). Reset, so niching
@@ -426,9 +428,9 @@ class OffspringUpdater(CompoundOperator):
                 total_attempts += 1
                 temp_offspring = self.suboperators['chromosome_mutation'].apply(objective=temp_offspring,
                                                                                 arguments=subop_args['chromosome_mutation'])
-                temp_offspring.reset_state(True)
-                # Mutation changed the chromosome -- the sector domain must
-                # be re-derived from the post-mutation objectives.
+                # EquationMutation already reset the RPS state of the changed
+                # equations; only the moeadd niching cache must be re-derived
+                # from the post-mutation objectives.
                 temp_offspring.reset_moeadd_state()
                 # SoEqRightPartSelector resolves system degeneracy inline
                 # (no two equations may share an identical active

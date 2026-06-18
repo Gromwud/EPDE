@@ -495,6 +495,40 @@ def _equations_share_active_structure(eq_a: Equation, eq_b: Equation) -> bool:
     return bool(sig_a) and sig_a == eq_b.active_terms_labels
 
 
+def _target_term_in_other_equation(eq_with_target: Equation,
+                                   eq_other: Equation):
+    """Return ``eq_with_target``'s TARGET-term factor signature iff that
+    whole term also appears as a (standalone) term in ``eq_other``'s ACTIVE
+    structure; otherwise ``None``.
+
+    This enforces target-term uniqueness across a system: the explained
+    right-part term of one equation may not be carried as a complete term
+    by another equation of the same system (the documented Lotka-Volterra
+    leak where ``dv/dx0`` rode into the ``u`` equation as its own term).
+
+    It is deliberately a WHOLE-TERM equality test -- ``target.factors_labels``
+    is one element of ``eq_other.active_terms_labels`` -- NOT a
+    sub-product/divides test: a target derivative appearing only as a
+    FACTOR inside a composite coupling term (e.g. continuity's ``v_y``
+    inside the v-momentum ``v*v_y`` of true Navier-Stokes) is legitimate
+    physics and is left untouched.
+
+    Directional by construction (``eq_with_target``'s target into
+    ``eq_other``); the caller scans both orderings of every pair. The
+    target term is re-fetched as ``structure[target_idx]`` (never cached
+    across rerolls) and guarded exactly as the existing degeneracy path
+    (right_part_selection.py:608-612). ACTIVE scope means a zero-weight
+    padding copy is ignored; any later reactivation is caught by the next
+    per-generation RPS pass.
+    """
+    try:
+        target_sig = eq_with_target.structure[
+            eq_with_target.target_idx].factors_labels
+    except (AttributeError, IndexError, TypeError):
+        return None
+    return target_sig if target_sig in eq_other.active_terms_labels else None
+
+
 def _break_equation_duplication(equation: Equation, shared_sigs, *,
                                 preferred_sigs=(), max_iter: int = 2000) -> bool:
     """Break a system-level degeneracy by randomizing ONE non-target term of
@@ -551,22 +585,38 @@ def _break_equation_duplication(equation: Equation, shared_sigs, *,
 class SoEqRightPartSelector(CompoundOperator):
     """Chromosome-level RPS that prevents system-level degeneracy.
 
-    Invariant: no two equations in a system may have an identical ACTIVE
-    structure -- the same set of fitted nonzero-weight terms (targets
-    included), i.e. the same law rearranged. Cross-equation term sharing
-    is otherwise fully allowed: an equation for ``v`` may legitimately
-    carry ``du/dx0`` as a coupling term even when the equation for ``u``
-    explains ``du/dx0`` as its right part.
+    Two invariants:
 
-    The degenerate case this guards against: with no restriction at all,
-    both equations of a coupled system can converge onto one shared law
-    (e.g. both Navier-Stokes velocity equations becoming the continuity
-    law), collapsing the system into two copies of a single relation.
+    1. No two equations in a system may have an identical ACTIVE structure
+       -- the same set of fitted nonzero-weight terms (targets included),
+       i.e. the same law rearranged.
+
+    2. No equation's TARGET term may appear as a whole (standalone) term in
+       ANY other equation of the system -- the explained right-part term of
+       one equation is reserved to that equation. This is a whole-term
+       equality rule, NOT a sub-product one: a target derivative appearing
+       only as a FACTOR inside a composite coupling term of another
+       equation (e.g. continuity's ``v_y`` inside the v-momentum convective
+       term ``v*v_y`` of Navier-Stokes) is legitimate physics and is left
+       untouched.
+
+    Cross-equation FACTOR sharing is otherwise allowed: an equation for
+    ``v`` may carry ``du/dx0`` inside a composite term even when the
+    equation for ``u`` explains ``du/dx0`` -- only a bare standalone
+    ``du/dx0`` term in the ``v`` equation is forbidden.
+
+    The degenerate cases this guards against: (1) both equations of a
+    coupled system converging onto one shared law (e.g. both Navier-Stokes
+    velocity equations becoming the continuity law), collapsing the system
+    into two copies of a single relation; and (2) one equation's explained
+    derivative leaking as a standalone term into a sibling equation (e.g.
+    ``dv/dx0`` riding into the ``u`` equation of Lotka-Volterra).
 
     Mechanics: a plain per-equation forward pass first, then a bounded
-    convergence loop -- whenever a pair of equations ends up with equal
-    active structures, the later equation has one shared term rerolled
-    (``_break_equation_duplication``) and its right part re-selected.
+    convergence loop that, each pass, (a) rerolls the later member of any
+    pair of equations with equal active structures and (b) rerolls any
+    equation carrying another equation's target term as a whole term
+    (both via ``_break_equation_duplication`` + right-part re-selection).
     The loop exits at the first pass with no changes (fixed point).
     """
     key = 'SoEqRightPartSelector'
@@ -621,6 +671,39 @@ class SoEqRightPartSelector(CompoundOperator):
                     eq_k.is_correct_right_part = False
                     eq_selector.apply(objective=eq_k, arguments=eq_args)
                     any_changes = True
+
+            # Target-term uniqueness: no equation's TARGET term may appear
+            # as a whole (standalone) term in ANOTHER equation of the
+            # system. Directional -- scan every ordered pair (i -> j) and,
+            # when eq i's target rides in eq j, reroll eq j's offending copy
+            # via the same _break_equation_duplication drop-or-reroll
+            # primitive, then re-select eq j's right part. A target
+            # derivative that appears only as a FACTOR inside a composite
+            # coupling term of eq j (e.g. continuity's ``v_y`` in ``v*v_y``)
+            # is left untouched -- this is whole-term equality, not
+            # sub-product. If the only match is eq j's own target,
+            # _break_equation_duplication finds no rerollable candidate and
+            # returns False, so the pass tolerates it (cannot reroll a
+            # target).
+            for i in range(len(equations)):
+                for j in range(len(equations)):
+                    if i == j:
+                        continue
+                    eq_i, eq_j = equations[i], equations[j]
+                    leak_sig = _target_term_in_other_equation(eq_i, eq_j)
+                    if leak_sig is None:
+                        continue
+                    changed = _break_equation_duplication(
+                        eq_j, {leak_sig}, preferred_sigs={leak_sig})
+                    if not changed:
+                        continue
+                    eq_j.right_part_selected = False
+                    eq_j.simplified = False
+                    eq_j.is_correct_right_part = False
+                    eq_selector.apply(objective=eq_j, arguments=eq_args)
+                    _loop_stats.record('SoEqRPS.target_leak_repair', 1, 1)
+                    any_changes = True
+
             if not any_changes:
                 break
         _loop_stats.record('SoEqRPS.degeneracy_passes', passes_used, max_passes)

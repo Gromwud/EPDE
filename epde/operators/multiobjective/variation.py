@@ -133,6 +133,12 @@ class ChromosomeCrossover(CompoundOperator):
                 temp_eq = offspring_1.vals[eq_key]
                 offspring_1.vals.replace_gene(gene_key = eq_key, value = offspring_2.vals[eq_key])
                 offspring_2.vals.replace_gene(gene_key = eq_key, value = temp_eq)
+                # The swapped equations keep their structure but land in a new
+                # system. Clear only right_part_selected (not simplified /
+                # is_correct_right_part) so the system-level pairwise scan
+                # re-validates the composition without re-running each term-sweep.
+                offspring_1.vals[eq_key].right_part_selected = False
+                offspring_2.vals[eq_key].right_part_selected = False
             else:
                 temp_eq_1, temp_eq_2 = self.suboperators['equation_crossover'].apply(objective = (offspring_1.vals[eq_key],
                                                                                                   offspring_2.vals[eq_key]),
@@ -210,7 +216,7 @@ class EquationCrossover(CompoundOperator):
         both parents -- i.e. clone offspring with zero diversity. This
         rewrite delivers genuinely-different offspring, activates the
         wired-but-dormant ``term_param_crossover`` sub-operator, and
-        keeps the D10 dedup invariant.
+        keeps the no-duplicate-term invariant.
         """
         self_args, subop_args = self.parse_suboperator_args(arguments = arguments)
 
@@ -222,7 +228,7 @@ class EquationCrossover(CompoundOperator):
         # Snapshot target term identity (not the term itself) -- the
         # actual deepcopy is deferred to ``_ensure_target`` and only
         # pays when the target wasn't already partitioned into the
-        # offspring via Phase 1/2/3. Common case (target shared as an
+        # offspring during assembly. Common case (target shared as an
         # anchor) saves both deepcopies entirely.
         p1_target_ref = parent1.structure[parent1.target_idx]
         p2_target_ref = parent2.structure[parent2.target_idx]
@@ -238,7 +244,7 @@ class EquationCrossover(CompoundOperator):
             """
             return frozenset(factor.label for factor in term.structure)
 
-        # Phase 1 -- find same-anchor pairs (exact factors_labels match).
+        # Find same-anchor pairs (exact factors_labels match).
         # Pairs are stored as (i, j) so each offspring inherits its own
         # parent's instance of the anchored term: two terms with equal
         # ``factors_labels`` (bucketed structural identity) can still
@@ -267,8 +273,8 @@ class EquationCrossover(CompoundOperator):
         unique_e2_idxs = [j for j in range(len(parent2.structure))
                           if j not in e2_used]
 
-        # Phase 2 -- find param-blend pairs (matching factor function set,
-        # differing params) among the unique-side terms.
+        # Find param-blend pairs (matching factor function set, differing
+        # params) among the unique-side terms.
         param_pairs = []
         remaining_e1 = list(unique_e1_idxs)
         remaining_e2 = list(unique_e2_idxs)
@@ -281,10 +287,9 @@ class EquationCrossover(CompoundOperator):
                     remaining_e2.remove(j)
                     break
 
-        # Phase 3 -- assemble offspring.
-        # Each anchor pair contributes parent1's instance to offspring1
-        # and parent2's instance to offspring2 (preserving per-parent
-        # within-bucket variation -- see Phase 1 comment).
+        # Assemble offspring. Each anchor pair contributes parent1's instance
+        # to offspring1 and parent2's instance to offspring2 (preserving
+        # per-parent within-bucket variation -- see the anchor-pair comment).
         offspring1_terms = [deepcopy(parent1.structure[i]) for i, _ in anchor_pairs]
         offspring2_terms = [deepcopy(parent2.structure[j]) for _, j in anchor_pairs]
 
@@ -317,7 +322,7 @@ class EquationCrossover(CompoundOperator):
         for j in e2_unique[n_pairs:]:
             offspring2_terms.append(deepcopy(parent2.structure[j]))
 
-        # Phase 4 -- force-include each parent's target term so right-part
+        # Force-include each parent's target term so right-part
         # validity survives the partition. Anchored / partitioned targets
         # are already present; the helper is a no-op in that case. When
         # we DO need to add the target, deepcopy on the spot so the
@@ -333,10 +338,10 @@ class EquationCrossover(CompoundOperator):
         offspring2_terms = _ensure_target(
             offspring2_terms, p2_target_ref, p2_target_labels)
 
-        # Phase 5 -- D10 post-assembly dedup gate. A param-blend pair can
-        # in principle produce a structural_label that collides with an
-        # anchor term, and we'd rather revert to parents than emit a
-        # duplicate-bearing chromosome.
+        # Post-assembly dedup gate. A param-blend pair can in principle
+        # produce a structural_label that collides with an anchor term, and
+        # we'd rather revert to parents than emit a duplicate-bearing
+        # chromosome.
         eq1_sigs = [t.factors_labels for t in offspring1_terms]
         eq2_sigs = [t.factors_labels for t in offspring2_terms]
         had_duplicate = (len(set(eq1_sigs)) != len(eq1_sigs)
@@ -348,8 +353,8 @@ class EquationCrossover(CompoundOperator):
         if had_duplicate:
             return objective[0], objective[1]
 
-        # Phase 6 -- build the offspring Equation objects via shell
-        # clones (no parent ``structure`` deepcopy). The offspring term
+        # Build the offspring Equation objects via shell clones (no parent
+        # ``structure`` deepcopy). The offspring term
         # list is freshly built above; cloning the full parent and then
         # overwriting ``.structure`` wasted a Term+Factor recursion that
         # was the heaviest single deepcopy in the crossover hot path.
@@ -369,6 +374,12 @@ class EquationCrossover(CompoundOperator):
 
         equation1._invalidate_label_cache()
         equation2._invalidate_label_cache()
+        # The recombined structures sit on clone_shell bodies that inherited
+        # the parents' right-part flags; reset so RPS re-runs. Equations that
+        # did not recombine are returned unchanged earlier (crossover-prob
+        # early return / dedup-revert) and never reach here.
+        equation1.reset_state(reset_right_part=True)
+        equation2.reset_state(reset_right_part=True)
         return equation1, equation2
 
     def use_default_tags(self):

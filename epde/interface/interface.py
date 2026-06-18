@@ -11,6 +11,7 @@ such as initialization of neccessary token families and derivatives calculation.
 **EpdeSearch** class for main interactions between the user and the framework.
 
 """
+import inspect
 import pickle
 import numpy as np
 import torch
@@ -241,7 +242,7 @@ class EpdeSearch(object):
                  pivotal_tensor_label=None, pruner=None, threshold: float = 1e-2,
                  division_fractions=3, rectangular: bool = True,
                  params_filename: str = None, device: str = 'cpu',
-                 fitness_cls=None, sparsity_cls=None):
+                 discrepancy_metric: str = 'wape', sparsity_cls=None):
         """
         Args:
             multiobjective_mode (`bool`): optional, default True
@@ -292,6 +293,7 @@ class EpdeSearch(object):
         self._device = device
         self.multiobjective_mode = multiobjective_mode
         self._use_pic = use_pic
+        self._discrepancy_metric = discrepancy_metric
 
         global_var.set_time_axis(time_axis)
         global_var.init_verbose(**verbose_params)
@@ -324,7 +326,7 @@ class EpdeSearch(object):
             self.director.builder = builder
             self.director.use_baseline(use_solver=self._mode_info['solver_fitness'],
                                        use_pic=self._use_pic, params=director_params,
-                                       fitness_cls=fitness_cls, sparsity_cls=sparsity_cls)
+                                       discrepancy_metric=discrepancy_metric, sparsity_cls=sparsity_cls)
         else:
             raise NotImplementedError('Wrong arguments passed during the epde search initialization')
 
@@ -866,7 +868,13 @@ class EpdeSearch(object):
         else:
             self.optimizer = optimizer
             
-        self.optimizer.optimize(**self.optimizer_exec_params)
+        # Pass only the exec params this optimizer's ``optimize`` accepts:
+        # SimpleOptimizer.optimize has no ``early_stopping_callback`` (a
+        # MOEA/D-only exec param that set_moeadd_params leaves behind when an
+        # EpdeSearch built multiobjective-by-default is run single-objective).
+        _exec_keys = set(inspect.signature(self.optimizer.optimize).parameters) - {'self'}
+        _exec_params = {k: v for k, v in self.optimizer_exec_params.items() if k in _exec_keys}
+        self.optimizer.optimize(**_exec_params)
         
         print('The optimization has been conducted.')
         self.search_conducted = True
@@ -890,9 +898,17 @@ class EpdeSearch(object):
             optimizer.pass_best_objectives(*best_sol_vals)
         else:
             optimizer_init_params['passed_population'] = population
-            optimizer = SimpleOptimizer(**optimizer_init_params)
-        
-        optimizer.set_strategy(opt_strategy_director)        
+            # Pass only the params SimpleOptimizer accepts. ``optimizer_init_params``
+            # can still carry MOEA/D-only keys (e.g. ``H``, ``nds_method``) if
+            # ``set_moeadd_params`` ran earlier -- which it does in EpdeSearch's
+            # default (multiobjective) __init__ before a switch to single-objective.
+            # Selecting by SimpleOptimizer's signature keeps this robust to how the
+            # params dict was populated.
+            so_keys = set(inspect.signature(SimpleOptimizer.__init__).parameters) - {'self'}
+            so_params = {k: v for k, v in optimizer_init_params.items() if k in so_keys}
+            optimizer = SimpleOptimizer(**so_params)
+
+        optimizer.set_strategy(opt_strategy_director)
         return optimizer
 
     @property
@@ -1457,7 +1473,13 @@ class EpdeMultisample(EpdeSearch):
         else:
             self.optimizer = optimizer
             
-        self.optimizer.optimize(**self.optimizer_exec_params)
+        # Pass only the exec params this optimizer's ``optimize`` accepts:
+        # SimpleOptimizer.optimize has no ``early_stopping_callback`` (a
+        # MOEA/D-only exec param that set_moeadd_params leaves behind when an
+        # EpdeSearch built multiobjective-by-default is run single-objective).
+        _exec_keys = set(inspect.signature(self.optimizer.optimize).parameters) - {'self'}
+        _exec_params = {k: v for k, v in self.optimizer_exec_params.items() if k in _exec_keys}
+        self.optimizer.optimize(**_exec_params)
         
         print('The optimization has been conducted.')
         self.search_conducted = True    
